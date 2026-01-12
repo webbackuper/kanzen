@@ -1,0 +1,4 @@
+# Remplacez par votre domaine réel ou l'IP du serveur
+KanZen.votre-domaine.com {
+    reverse_proxy KanZen:3000
+}

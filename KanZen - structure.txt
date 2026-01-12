@@ -1,0 +1,44 @@
+KanZen/
+├── .env.example                # Modèle des variables d'environnement (JWT, DB Path)
+├── .gitignore                  # Fichiers à ignorer (node_modules, .db réels, dist, uploads)
+├── Caddyfile                   # Configuration du Reverse Proxy (HTTPS automatique)
+├── Dockerfile                  # Build Docker Multi-stage (Construction UI + Serveur Node)
+├── docker-compose.yml          # Orchestration des conteneurs (App + Caddy) et volumes
+├── package.json                # Dépendances unifiées (Fastify, React, Socket.io, Prisma...) [Modifié]
+│
+├── prisma/                     # Gestion de la Base de Données
+│   ├── schema.prisma           # Schéma BDD (Ajout: SubTask, DueDate, indexes) [Modifié]
+│   └── seed.js                 # Script pour peupler la BDD avec des données de test
+│
+├── src/
+│   ├── client/                 # --- FRONTEND (React + Vite) ---
+│   │   ├── index.html          # Point d'entrée HTML
+│   │   ├── postcss.config.js   # Config CSS (Tailwind)
+│   │   ├── tailwind.config.js  # Config Styles (Ajout: darkMode: 'class') [Modifié]
+│   │   ├── vite.config.js      # Config du bundler Vite (Proxy dev)
+│   │   │
+│   │   └── src/
+│   │       ├── main.jsx        # Point d'entrée React (ReactDOM)
+│   │       ├── index.css       # Directives Tailwind globales
+│   │       ├── App.jsx         # Routing (Router), Layout principal & Dark Mode Context [Modifié]
+│   │       │
+│   │       └── components/     # Composants React
+│   │           ├── Analytics.jsx     # Vue Statistiques (Graphiques)
+│   │           ├── CalendarView.jsx  # [NOUVEAU] Vue Calendrier/Agenda mensuel
+│   │           ├── Column.jsx        # Colonne Kanban (Gestion du Drop & Props Token) [Modifié]
+│   │           ├── KanbanBoard.jsx   # Vue Tableau (Drag&Drop + Client Socket.io) [Modifié]
+│   │           ├── Login.jsx         # Formulaire de connexion
+│   │           └── TaskCard.jsx      # Carte Tâche (Affichage Sous-tâches, Dates, Checkbox) [Modifié]
+│   │
+│   └── server/                 # --- BACKEND (Node.js/Fastify) ---
+│       ├── index.js            # Serveur API Principal (Config Socket.io, Routes, Auth) [Modifié]
+│       │
+│       └── logic/              # Logique Métier (Séparation des responsabilités)
+│           ├── auth.js         # Hachage mots de passe & Vérification
+│           ├── automations.js  # Moteur de règles (Webhooks, triggers)
+│           ├── backup.js       # Système de sauvegarde BDD (SQLite dump)
+│           ├── notifications.js# Envoi d'alertes (Email/Slack simulés)
+│           ├── stats.js        # Génération des CSV pour l'export
+│           └── upload.js       # Gestion sécurisée des fichiers joints [Modifié]
+│
+└── uploads/                    # Dossier de stockage des fichiers (Créé dynamiquement, ignoré par Git)

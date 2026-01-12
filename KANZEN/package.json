@@ -1,0 +1,44 @@
+{
+  "name": "KanZen-fullstack",
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
+    "dev:server": "node src/server/index.js",
+    "dev:ui": "vite src/client",
+    "build:ui": "vite build src/client --outDir dist",
+    "prisma:seed": "node prisma/seed.js"
+  },
+  "dependencies": {
+    "fastify": "^4.21.0",
+    "@fastify/static": "^6.12.0",
+    "@fastify/jwt": "^7.2.4",
+    "@fastify/cors": "^8.3.0",
+    "@fastify/multipart": "^8.3.0",
+    "fastify-socket.io": "^4.0.0",
+    "socket.io": "^4.7.0",
+    "@prisma/client": "^5.1.0",
+    "bcryptjs": "^2.4.3",
+    "node-cron": "^3.0.2",
+    "node-fetch": "^3.3.2",
+    "json2csv": "^6.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.14.0", 
+    "@dnd-kit/core": "^6.0.8",
+    "@dnd-kit/sortable": "^7.0.2",
+    "recharts": "^2.7.2",
+    "lucide-react": "^0.263.1",
+    "socket.io-client": "^4.7.0",
+    "date-fns": "^2.30.0",
+    "clsx": "^2.0.0"
+  },
+  "devDependencies": {
+    "vite": "^4.4.0",
+    "tailwindcss": "^3.3.0",
+    "postcss": "^8.4.0",
+    "autoprefixer": "^10.4.0",
+    "prisma": "^5.1.0",
+    "concurrently": "^8.2.0"
+  }
+}

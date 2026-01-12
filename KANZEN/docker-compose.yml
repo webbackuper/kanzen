@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  KanZen:
+    build: .
+    container_name: KanZen_app
+    restart: always
+    environment:
+      - DATABASE_URL=file:/app/data/KanZen.db
+      - NODE_ENV=production
+      - JWT_SECRET=votre_super_secret_jwt_changez_moi
+    volumes:
+      - ./data:/app/data          # Persistance BDD
+      - ./backups:/app/backups    # Persistance Backups
+      - ./uploads:/app/uploads    # NOUVEAU : Persistance des fichiers
+    networks:
+      - KanZen_net
+
+  caddy:
+    image: caddy:latest
+    container_name: KanZen_proxy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    networks:
+      - KanZen_net
+
+volumes:
+  caddy_data:
+
+networks:
+  KanZen_net:

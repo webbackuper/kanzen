@@ -1,0 +1,139 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  USER
+  OBSERVER
+}
+
+model User {
+  id           String            @id @default(uuid())
+  email        String            @unique
+  password     String
+  name         String
+  role         Role              @default(USER)
+  memberships  WorkspaceMember[]
+  assignedTasks Task[]           @relation("AssignedTo")
+}
+
+model Workspace {
+  id        String            @id @default(uuid())
+  name      String
+  slug      String            @unique
+  members   WorkspaceMember[]
+  boards    Board[]
+  groups    Group[]
+}
+
+model WorkspaceMember {
+  id          String    @id @default(uuid())
+  userId      String
+  workspaceId String
+  role        Role      @default(USER)
+  user        User      @relation(fields: [userId], references: [id])
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  @@unique([userId, workspaceId])
+}
+
+model Group {
+  id          String    @id @default(uuid())
+  name        String
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  memberIds   String    
+}
+
+model Board {
+  id          String    @id @default(uuid())
+  title       String
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  columns     Column[]
+}
+
+model Column {
+  id      String @id @default(uuid())
+  title   String
+  order   Int
+  boardId String
+  board   Board  @relation(fields: [boardId], references: [id])
+  tasks   Task[]
+  rules   Rule[]
+}
+
+model Task {
+  id               String           @id @default(uuid())
+  content          String
+  color            String           @default("white")
+  columnId         String
+  column           Column           @relation(fields: [columnId], references: [id])
+  
+  // NOUVEAU : Gestion Calendrier & Assignation
+  dueDate          DateTime?
+  assigneeId       String?
+  assignee         User?            @relation("AssignedTo", fields: [assigneeId], references: [id])
+  
+  // Validation
+  validatorGroupId String?
+  
+  // Relations Contenu
+  subtasks         SubTask[]        // NOUVEAU
+  comments         Comment[]
+  attachments      Attachment[]
+  events           TaskEvent[]
+  
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+}
+
+// NOUVEAU MODEL : Sous-tâches
+model SubTask {
+  id        String   @id @default(uuid())
+  content   String
+  completed Boolean  @default(false)
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model Attachment {
+  id         String   @id @default(uuid())
+  filename   String
+  path       String
+  mimetype   String
+  size       Int
+  taskId     String
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedAt DateTime @default(now())
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  content   String
+  createdAt DateTime @default(now())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model TaskEvent {
+  id           String   @id @default(uuid())
+  taskId       String
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fromColumnId String?
+  toColumnId   String
+  timestamp    DateTime @default(now())
+}
+
+model Rule {
+  id        String @id @default(uuid())
+  triggerId String
+  column    Column @relation(fields: [triggerId], references: [id])
+  action    String 
+  value     String
+}
