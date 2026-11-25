@@ -32,6 +32,9 @@ export function createAuthz(prisma) {
     subtask: async (id) => (await prisma.subTask.findUnique({ where: { id }, select: { task: { select: { column: { select: { board: { select: { workspaceId: true } } } } } } } }))?.task.column.board.workspaceId,
     comment: async (id) => (await prisma.comment.findUnique({ where: { id }, select: { task: { select: { column: { select: { board: { select: { workspaceId: true } } } } } } } }))?.task.column.board.workspaceId,
     attachment: async (id) => (await prisma.attachment.findUnique({ where: { id }, select: { task: { select: { column: { select: { board: { select: { workspaceId: true } } } } } } } }))?.task.column.board.workspaceId,
+    wikiPage: async (id) => (await prisma.wikiPage.findUnique({ where: { id }, select: { workspaceId: true } }))?.workspaceId,
+    wikiRevision: async (id) => (await prisma.wikiRevision.findUnique({ where: { id }, select: { page: { select: { workspaceId: true } } } }))?.page.workspaceId,
+    wikiFile: async (id) => (await prisma.wikiFile.findUnique({ where: { id }, select: { page: { select: { workspaceId: true } } } }))?.page.workspaceId,
   };
 
   /** Vérifie l'accès à une ressource et renvoie { workspaceId, role }. */

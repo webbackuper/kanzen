@@ -66,6 +66,37 @@ try {
   await page.getByRole('link', { name: 'Statistiques' }).click();
   await page.getByText('Répartition par colonne').waitFor();
 
+  // Wiki : lecture, création d'une page avec mise en forme, recherche plein texte, historique
+  await page.goto(`${BASE}/`);
+  await page.getByText('Équipe Infra').click();
+  await page.getByRole('link', { name: 'Wiki', exact: true }).click();
+  await page.getByRole('heading', { name: /Wiki · Équipe Infra/ }).waitFor();
+  await page.getByRole('navigation', { name: 'Pages du wiki' }).getByRole('link', { name: "Accueil de l'équipe Infra" }).click();
+  await page.getByRole('link', { name: 'Procédure de sauvegarde' }).last().click();
+  await page.getByText('Test de restauration trimestriel', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Nouvelle sous-page de Accueil' }).click({ force: true });
+  const titleBox = page.getByLabel('Titre de la page');
+  await titleBox.fill('Runbook E2E');
+  const editor = page.getByLabel('Contenu de la page');
+  await editor.click();
+  await page.keyboard.type('Redémarrer le ');
+  await page.keyboard.press('Control+b');
+  await page.keyboard.type('reverse proxy');
+  await page.keyboard.press('Control+b');
+  await page.keyboard.type(' après rotation des certificats.');
+  await page.getByRole('button', { name: 'Enregistrer' }).click();
+  await page.getByRole('button', { name: 'Modifier' }).waitFor();
+  await page.locator('.kz-prose strong', { hasText: 'reverse proxy' }).waitFor();
+  await page.getByRole('navigation', { name: 'Pages du wiki' }).getByRole('link', { name: 'Runbook E2E' }).waitFor();
+  await page.getByPlaceholder('Rechercher dans le wiki').fill('certificat');
+  await page.keyboard.press('Enter');
+  await page.getByRole('link', { name: 'Runbook E2E' }).first().waitFor();
+  await page.locator('mark', { hasText: /certificat/i }).first().waitFor();
+  await page.getByRole('link', { name: 'Runbook E2E' }).first().click();
+  await page.getByRole('button', { name: 'Historique' }).click();
+  await page.getByRole('button', { name: /Version 2 \(actuelle\)/ }).waitFor();
+  await page.getByLabel('Fermer').click();
+
   // Déconnexion
   await page.getByLabel('Se déconnecter').click();
   await page.getByRole('button', { name: 'Se connecter' }).waitFor();

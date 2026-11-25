@@ -19,6 +19,7 @@ import boardRoutes from './routes/boards.js';
 import taskRoutes from './routes/tasks.js';
 import attachmentRoutes from './routes/attachments.js';
 import adminRoutes from './routes/admin.js';
+import wikiRoutes from './routes/wiki.js';
 
 export async function buildApp({ cfg, prisma, ldap, logger } = {}) {
   const app = Fastify({
@@ -53,6 +54,14 @@ export async function buildApp({ cfg, prisma, ldap, logger } = {}) {
     for (const n of names) {
       if (/^[0-9a-f-]{36}$/.test(n)) await fs.promises.rm(path.join(uploadDir, n), { force: true });
     }
+  });
+  // Noms de stockage des fichiers rattachés à un espace, un tableau ou une colonne, à effacer du disque
+  // après la suppression en cascade en base (sinon ils resteraient orphelins dans le stockage).
+  app.decorate('storedFilesOf', async ({ workspaceId, boardId, columnId }) => {
+    const column = columnId ? { id: columnId } : boardId ? { boardId } : { board: { workspaceId } };
+    const attachments = await prisma.attachment.findMany({ where: { task: { column } }, select: { storageName: true } });
+    const wiki = workspaceId ? await prisma.wikiFile.findMany({ where: { page: { workspaceId } }, select: { storageName: true } }) : [];
+    return [...attachments, ...wiki].map((f) => f.storageName);
   });
 
   await app.register(fastifyCookie);
@@ -130,6 +139,7 @@ export async function buildApp({ cfg, prisma, ldap, logger } = {}) {
   await app.register(taskRoutes, { prefix: '/api' });
   await app.register(attachmentRoutes, { prefix: '/api' });
   await app.register(adminRoutes, { prefix: '/api' });
+  await app.register(wikiRoutes, { prefix: '/api' });
 
   // --- Interface web (build Vite) : les routes inconnues hors /api renvoient l'index (SPA) ---
   if (cfg.staticDir && fs.existsSync(cfg.staticDir)) {

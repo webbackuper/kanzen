@@ -1,3 +1,35 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* --- Wiki : typographie des pages (lecture et édition) --- */
+@layer components {
+  .kz-prose { @apply text-gray-800 dark:text-gray-200 leading-relaxed text-[15px]; }
+  .kz-prose > * + * { @apply mt-3; }
+  .kz-prose h1 { @apply text-2xl font-bold mt-8 text-gray-900 dark:text-white; }
+  .kz-prose h2 { @apply text-xl font-semibold mt-7 pb-1 border-b border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white; }
+  .kz-prose h3 { @apply text-lg font-semibold mt-6 text-gray-900 dark:text-white; }
+  .kz-prose h4 { @apply font-semibold mt-5 text-gray-900 dark:text-white; }
+  .kz-prose a { @apply text-indigo-600 dark:text-indigo-400 underline underline-offset-2 cursor-pointer; }
+  .kz-prose ul { @apply list-disc pl-6; }
+  .kz-prose ol { @apply list-decimal pl-6; }
+  .kz-prose li > p { @apply my-0.5; }
+  .kz-prose ul[data-type="taskList"] { @apply list-none pl-1; }
+  .kz-prose ul[data-type="taskList"] li { @apply flex items-start gap-2; }
+  .kz-prose ul[data-type="taskList"] li > label { @apply mt-1 select-none; }
+  .kz-prose ul[data-type="taskList"] li > div { @apply flex-1; }
+  .kz-prose ul[data-type="taskList"] li[data-checked="true"] > div { @apply line-through text-gray-400; }
+  .kz-prose blockquote { @apply border-l-4 border-indigo-200 dark:border-indigo-800 pl-4 italic text-gray-600 dark:text-gray-400; }
+  .kz-prose code { @apply px-1 py-0.5 rounded bg-gray-100 dark:bg-slate-800 text-[0.9em] font-mono text-pink-700 dark:text-pink-300; }
+  .kz-prose pre { @apply p-4 rounded-lg bg-slate-900 text-slate-100 overflow-x-auto text-sm; }
+  .kz-prose pre code { @apply p-0 bg-transparent text-inherit; }
+  .kz-prose hr { @apply my-6 border-gray-200 dark:border-slate-700; }
+  .kz-prose mark { @apply bg-yellow-200 dark:bg-yellow-700/60 rounded px-0.5; }
+  .kz-prose img { @apply max-w-full rounded-md border border-gray-200 dark:border-slate-700; }
+  .kz-prose img.ProseMirror-selectednode { @apply ring-2 ring-indigo-500; }
+  .kz-prose table { @apply w-full border-collapse text-sm my-4 table-fixed; }
+  .kz-prose th, .kz-prose td { @apply border border-gray-300 dark:border-slate-600 px-2 py-1 align-top; }
+  .kz-prose th { @apply bg-gray-100 dark:bg-slate-800 font-semibold text-left; }
+  .kz-prose .selectedCell { @apply bg-indigo-50 dark:bg-indigo-900/40; }
+  .kz-prose p.is-editor-empty:first-child::before { content: attr(data-placeholder); @apply float-left h-0 pointer-events-none text-gray-400; }
+}

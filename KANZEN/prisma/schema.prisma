@@ -22,7 +22,7 @@ enum GlobalRole {
 
 /// Rôle dans un espace de travail
 enum WorkspaceRole {
-  OWNER  // gère l'espace et ses membres
+  OWNER // gère l'espace et ses membres
   EDITOR // crée et modifie le contenu
   VIEWER // lecture seule
 }
@@ -34,31 +34,35 @@ enum AuthSource {
 }
 
 model User {
-  id           String     @id @default(uuid()) @db.Uuid
+  id                 String     @id @default(uuid()) @db.Uuid
   /// Identifiant de connexion : sAMAccountName pour LDAP, libre pour LOCAL. Toujours en minuscules.
-  username     String     @unique
-  email        String?
-  displayName  String
-  authSource   AuthSource
+  username           String     @unique
+  email              String?
+  displayName        String
+  authSource         AuthSource
   /// Hash argon2id, uniquement pour les comptes LOCAL
-  passwordHash String?
+  passwordHash       String?
   /// objectGUID AD (stable même si le compte est renommé)
-  externalId   String?    @unique
-  role         GlobalRole @default(USER)
-  disabled     Boolean    @default(false)
-  mustChangePassword Boolean @default(false)
-  failedLogins Int        @default(0)
-  lockedUntil  DateTime?
-  lastLoginAt  DateTime?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  externalId         String?    @unique
+  role               GlobalRole @default(USER)
+  disabled           Boolean    @default(false)
+  mustChangePassword Boolean    @default(false)
+  failedLogins       Int        @default(0)
+  lockedUntil        DateTime?
+  lastLoginAt        DateTime?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
 
   sessions      Session[]
   memberships   WorkspaceMember[]
   assignments   TaskAssignee[]
-  createdTasks  Task[]     @relation("CreatedBy")
+  createdTasks  Task[]            @relation("CreatedBy")
   comments      Comment[]
   attachments   Attachment[]
+  wikiCreated   WikiPage[]        @relation("WikiCreatedBy")
+  wikiUpdated   WikiPage[]        @relation("WikiUpdatedBy")
+  wikiRevisions WikiRevision[]
+  wikiFiles     WikiFile[]
 }
 
 /// Session côté serveur : le cookie porte un jeton opaque, seul son SHA-256 est stocké.
@@ -84,6 +88,7 @@ model Workspace {
   createdAt DateTime          @default(now())
   members   WorkspaceMember[]
   boards    Board[]
+  wikiPages WikiPage[]
 }
 
 model WorkspaceMember {
@@ -110,11 +115,11 @@ model Board {
 }
 
 model Column {
-  id       String  @id @default(uuid()) @db.Uuid
+  id       String @id @default(uuid()) @db.Uuid
   title    String
   position Float
-  boardId  String  @db.Uuid
-  board    Board   @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  boardId  String @db.Uuid
+  board    Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
   /// Limite WIP optionnelle
   wipLimit Int?
   tasks    Task[]
@@ -123,20 +128,20 @@ model Column {
 }
 
 model Task {
-  id          String   @id @default(uuid()) @db.Uuid
+  id          String         @id @default(uuid()) @db.Uuid
   title       String
-  description String   @default("")
-  color       String   @default("white")
+  description String         @default("")
+  color       String         @default("white")
   /// Position fractionnaire dans la colonne (réordonnancement sans renuméroter)
   position    Float
-  columnId    String   @db.Uuid
-  column      Column   @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  columnId    String         @db.Uuid
+  column      Column         @relation(fields: [columnId], references: [id], onDelete: Cascade)
   dueDate     DateTime?
   assignees   TaskAssignee[]
-  createdById String?  @db.Uuid
-  createdBy   User?    @relation("CreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdById String?        @db.Uuid
+  createdBy   User?          @relation("CreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   subtasks    SubTask[]
   comments    Comment[]
@@ -171,19 +176,19 @@ model SubTask {
 }
 
 model Attachment {
-  id          String   @id @default(uuid()) @db.Uuid
+  id           String   @id @default(uuid()) @db.Uuid
   /// Nom d'origine, affiché uniquement (jamais utilisé comme chemin)
-  filename    String
+  filename     String
   /// Nom de stockage généré (UUID), sans lien avec le nom fourni
-  storageName String   @unique
-  mimetype    String
-  size        Int
-  sha256      String
-  taskId      String   @db.Uuid
-  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  uploadedById String? @db.Uuid
-  uploadedBy  User?    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
-  uploadedAt  DateTime @default(now())
+  storageName  String   @unique
+  mimetype     String
+  size         Int
+  sha256       String
+  taskId       String   @db.Uuid
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedById String?  @db.Uuid
+  uploadedBy   User?    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedAt   DateTime @default(now())
 
   @@index([taskId])
 }
@@ -228,4 +233,80 @@ model AuditLog {
 
   @@index([timestamp])
   @@index([action])
+}
+
+// ---------------------------------------------------------------------------
+// Wiki : pages arborescentes par espace de travail, historique et recherche
+// ---------------------------------------------------------------------------
+
+/// Page du wiki. Le contenu est un document ProseMirror (JSON) validé côté serveur :
+/// aucun HTML brut n'est stocké, ce qui ferme la porte au XSS stocké.
+model WikiPage {
+  id          String                   @id @default(uuid()) @db.Uuid
+  workspaceId String                   @db.Uuid
+  workspace   Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parentId    String?                  @db.Uuid
+  parent      WikiPage?                @relation("WikiTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children    WikiPage[]               @relation("WikiTree")
+  title       String
+  icon        String?
+  content     Json
+  /// Texte brut extrait du contenu (recherche, extraits)
+  text        String                   @default("")
+  /// Position fractionnaire parmi les pages sœurs
+  position    Float
+  /// Incrémentée à chaque enregistrement : détection des modifications concurrentes
+  version     Int                      @default(1)
+  createdById String?                  @db.Uuid
+  createdBy   User?                    @relation("WikiCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedById String?                  @db.Uuid
+  updatedBy   User?                    @relation("WikiUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  /// Corbeille : renseigné quand la page (et sa descendance) est supprimée
+  deletedAt   DateTime?
+  /// Index plein texte : colonne GÉNÉRÉE par PostgreSQL (titre poids A, texte poids B, configuration « french »),
+  /// définie dans la migration 20261125140000_wiki. Ne jamais l'écrire. Une future « migrate dev » proposera
+  /// à tort un « DROP DEFAULT » sur cette colonne : retirer cette ligne du SQL généré.
+  search      Unsupported("tsvector")?
+
+  revisions WikiRevision[]
+  files     WikiFile[]
+
+  @@index([workspaceId, parentId])
+  @@index([parentId])
+  @@index([workspaceId, deletedAt])
+  @@index([search], type: Gin)
+}
+
+/// Historique : instantané d'une page après enregistrement
+model WikiRevision {
+  id        String   @id @default(uuid()) @db.Uuid
+  pageId    String   @db.Uuid
+  page      WikiPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  version   Int
+  title     String
+  content   Json
+  authorId  String?  @db.Uuid
+  author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  @@index([pageId, createdAt])
+}
+
+/// Image ou fichier inséré dans une page
+model WikiFile {
+  id           String   @id @default(uuid()) @db.Uuid
+  pageId       String   @db.Uuid
+  page         WikiPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  filename     String
+  storageName  String   @unique
+  mimetype     String
+  size         Int
+  sha256       String
+  uploadedById String?  @db.Uuid
+  uploadedBy   User?    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedAt   DateTime @default(now())
+
+  @@index([pageId])
 }

@@ -47,7 +47,9 @@ export default async function boardRoutes(app) {
 
   app.delete('/boards/:id', { ...auth, schema: { params: idParam } }, async (req) => {
     await authz.check(req.user, 'board', req.params.id, 'OWNER');
+    const files = await app.storedFilesOf({ boardId: req.params.id });
     await prisma.board.delete({ where: { id: req.params.id } });
+    await app.removeStoredFiles(files);
     await app.audit(req, 'board.delete', { target: req.params.id });
     return { ok: true };
   });
@@ -80,7 +82,9 @@ export default async function boardRoutes(app) {
 
   app.delete('/columns/:id', { ...auth, schema: { params: idParam } }, async (req) => {
     await authz.check(req.user, 'column', req.params.id, 'EDITOR');
+    const files = await app.storedFilesOf({ columnId: req.params.id });
     const column = await prisma.column.delete({ where: { id: req.params.id } });
+    await app.removeStoredFiles(files);
     realtime.boardChanged(column.boardId, 'column');
     return { ok: true };
   });

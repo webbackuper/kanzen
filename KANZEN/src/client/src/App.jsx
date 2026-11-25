@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { LayoutDashboard, Calendar, LogOut, Moon, Sun, Users, ScrollText, UserCog } from 'lucide-react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
+import { LayoutDashboard, Calendar, LogOut, Moon, Sun, Users, ScrollText, UserCog, Search } from 'lucide-react';
 import { api, setUnauthorizedHandler } from './api';
 import { Login, ChangePassword } from './components/Login';
 import { Workspaces, WorkspacePage } from './components/Workspaces';
@@ -8,7 +8,28 @@ import { KanbanBoard } from './components/KanbanBoard';
 import { BoardStats } from './components/BoardStats';
 import { CalendarView } from './components/CalendarView';
 import { AdminUsers, AdminAudit } from './components/Admin';
+// Wiki chargé à la demande (éditeur riche volumineux)
+const wiki = () => import('./components/wiki/Wiki');
+const WikiHome = lazy(() => wiki().then((m) => ({ default: m.WikiHome })));
+const WikiPage = lazy(() => wiki().then((m) => ({ default: m.WikiPage })));
+const WikiTrash = lazy(() => wiki().then((m) => ({ default: m.WikiTrash })));
+const WikiSearch = lazy(() => wiki().then((m) => ({ default: m.WikiSearch })));
 import { Loading, card } from './ui';
+
+function GlobalSearch() {
+  const navigate = useNavigate();
+  const [q, setQ] = useState('');
+  return (
+    <form role="search" className="hidden lg:block" onSubmit={(e) => { e.preventDefault(); if (q.trim()) { navigate(`/search?q=${encodeURIComponent(q.trim())}`); setQ(''); } }}>
+      <label className="relative block">
+        <span className="sr-only">Rechercher dans le wiki</span>
+        <Search size={14} className="absolute left-2.5 top-2 text-gray-400" />
+        <input className="w-52 pl-8 pr-2 py-1 rounded-md text-sm bg-gray-100 dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+          placeholder="Rechercher dans le wiki" value={q} onChange={(e) => setQ(e.target.value)} maxLength={200} />
+      </label>
+    </form>
+  );
+}
 
 function NavBar({ user, onLogout, toggleTheme, isDark }) {
   const link = ({ isActive }) => `flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${isActive
@@ -29,6 +50,8 @@ function NavBar({ user, onLogout, toggleTheme, isDark }) {
         </>}
       </div>
       <div className="flex items-center gap-3">
+        <GlobalSearch />
+        <NavLink to="/search" className="lg:hidden text-gray-400" aria-label="Rechercher dans le wiki"><Search size={18} /></NavLink>
         <button onClick={toggleTheme} className="text-gray-400 hover:text-yellow-500" aria-label="Changer de thème">{isDark ? <Sun size={18} /> : <Moon size={18} />}</button>
         <NavLink to="/account" className="text-right hidden sm:block" title="Mon compte">
           <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{user.displayName}</p>
@@ -89,17 +112,23 @@ export default function App() {
       <div className="flex flex-col h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
         <NavBar user={user} onLogout={logout} toggleTheme={() => setIsDark(!isDark)} isDark={isDark} />
         <main className="flex-1 overflow-auto relative">
+          <Suspense fallback={<Loading />}>
           <Routes>
             <Route path="/" element={<Workspaces user={user} />} />
             <Route path="/w/:id" element={<WorkspacePage user={user} />} />
             <Route path="/b/:id" element={<KanbanBoard user={user} />} />
             <Route path="/b/:id/stats" element={<BoardStats />} />
+            <Route path="/w/:id/wiki" element={<WikiHome />} />
+            <Route path="/w/:id/wiki/trash" element={<WikiTrash />} />
+            <Route path="/wiki/:id" element={<WikiPage />} />
+            <Route path="/search" element={<WikiSearch />} />
             <Route path="/calendar" element={<CalendarView />} />
             <Route path="/account" element={<Account user={user} onChanged={refresh} />} />
             {user.role === 'ADMIN' && <Route path="/admin/users" element={<AdminUsers user={user} />} />}
             {user.role === 'ADMIN' && <Route path="/admin/audit" element={<AdminAudit />} />}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </Suspense>
         </main>
       </div>
     </BrowserRouter>

@@ -65,7 +65,9 @@ export default async function workspaceRoutes(app) {
 
   app.delete('/workspaces/:id', { ...auth, schema: { params: idParam } }, async (req) => {
     await authz.require(req.user, req.params.id, 'OWNER');
+    const files = await app.storedFilesOf({ workspaceId: req.params.id });
     await prisma.workspace.delete({ where: { id: req.params.id } });
+    await app.removeStoredFiles(files);
     await audit(req, 'workspace.delete', { target: req.params.id });
     return { ok: true };
   });

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Plus, Trash2, Users, LayoutGrid } from 'lucide-react';
+import { Plus, Trash2, Users, LayoutGrid, BookOpen } from 'lucide-react';
 import { api } from '../api';
 import { ErrorBox, Loading, Modal, useApi, btnPrimary, btnGhost, btnDanger, input, card, ROLE_LABEL } from '../ui';
 
@@ -121,6 +121,7 @@ export function WorkspacePage({ user }) {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{ws.name}</h1>
         </div>
         <div className="flex gap-2">
+          <Link to={`/w/${id}/wiki`} className={btnPrimary}><BookOpen size={16} /> Wiki</Link>
           <button className={btnGhost} onClick={() => setShowMembers(true)}><Users size={16} /> Membres ({ws.members.length})</button>
           {isOwner && <button className={btnDanger} onClick={deleteWs}><Trash2 size={16} /> Supprimer</button>}
         </div>

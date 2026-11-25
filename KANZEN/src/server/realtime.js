@@ -1,4 +1,4 @@
-// Temps réel : Socket.io authentifié par le cookie de session, un salon par tableau.
+// Temps réel : Socket.io authentifié par le cookie de session, un salon par tableau et un par wiki d'espace.
 import { Server } from 'socket.io';
 
 function parseCookies(header = '') {
@@ -42,10 +42,23 @@ export function attachRealtime(fastify, { sessions, authz, cfg }) {
         ack?.({ ok: false });
       }
     });
+    // Wiki : un salon par espace de travail (arborescence et pages ouvertes)
+    socket.on('wiki:join', async (workspaceId, ack) => {
+      try {
+        if (typeof workspaceId !== 'string') throw new Error('bad');
+        await authz.check(socket.data.user, 'workspace', workspaceId, 'VIEWER');
+        for (const room of socket.rooms) if (room.startsWith('wiki:')) socket.leave(room);
+        socket.join(`wiki:${workspaceId}`);
+        ack?.({ ok: true });
+      } catch {
+        ack?.({ ok: false });
+      }
+    });
   });
 
   return {
     io,
     boardChanged: (boardId, reason) => io.to(`board:${boardId}`).emit('board:updated', { boardId, reason }),
+    wikiChanged: (workspaceId, event) => io.to(`wiki:${workspaceId}`).emit('wiki:changed', { workspaceId, ...event }),
   };
 }
