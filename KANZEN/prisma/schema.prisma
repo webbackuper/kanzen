@@ -46,6 +46,9 @@ model User {
   externalId         String?    @unique
   role               GlobalRole @default(USER)
   disabled           Boolean    @default(false)
+  /// Origine de la désactivation : « AD_SYNC » = retiré du groupe d'accès ou désactivé dans l'AD (réactivation
+  /// automatique à son retour), null = décision d'un administrateur KanZen (jamais levée automatiquement)
+  disabledReason     String?
   mustChangePassword Boolean    @default(false)
   failedLogins       Int        @default(0)
   lockedUntil        DateTime?

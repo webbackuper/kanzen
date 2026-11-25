@@ -83,6 +83,8 @@ export function loadConfig(overrides = {}) {
       caFile: read('LDAP_CA_FILE'), // chaîne de la PKI interne (PEM)
       startTls: bool('LDAP_STARTTLS', false),
       timeoutMs: int('LDAP_TIMEOUT_MS', 5000),
+      // Synchronisation des départs (désactivation + révocation des sessions) : période en minutes, 0 = désactivée
+      syncMinutes: int('AD_SYNC_INTERVAL_MINUTES', 15),
     },
     ...overrides,
   };

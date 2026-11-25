@@ -41,6 +41,8 @@ case $cmd in
     load_env; as_kanzen "$NODE" "$APP/scripts/create-admin.js" "$@" ;;
   check)
     load_env; as_kanzen "$NODE" "$APP/scripts/check.js" "$@" ;;
+  ad-sync)
+    load_env; as_kanzen "$NODE" "$APP/scripts/ad-sync.js" "$@" ;;
   backup)
     load_env; export BACKUP_DIR=${BACKUP_DIR:-/var/backups/kanzen}; runuser -u kanzen --preserve-environment -- "$APP/scripts/backup.sh" ;;
   restore)
@@ -55,6 +57,7 @@ Usage : kanzenctl <commande>
   migrate                 applique les migrations de schéma
   migrate-status          état des migrations
   create-admin <id>       crée/réinitialise un administrateur local de secours (mot de passe sur stdin)
+  ad-sync [--force]       synchronisation AD immédiate (départs, retours, noms, rôles)
   backup                  sauvegarde immédiate (base + pièces jointes) dans /var/backups/kanzen
   restore <archive>       restauration (service arrêté)
 USAGE

@@ -103,6 +103,14 @@ describe('authentification AD (annuaire simulé)', () => {
       if (u.password !== password) return { ok: false, reason: 'invalid_credentials' };
       return { ok: true, profile: { username, displayName: username.toUpperCase(), email: `${username}@corp.local`, externalId: u.guid, isAdmin: u.isAdmin } };
     },
+    // Recherche, résolution par GUID et liste complète : seuls les comptes du groupe d'accès sont visibles
+    profile: (username) => ({ username, displayName: username.toUpperCase(), email: `${username}@corp.local`, externalId: directory[username].guid, isAdmin: directory[username].isAdmin }),
+    async searchUsers(q) { return Object.keys(directory).filter((n) => directory[n].inGroup && n.includes(q)).map((n) => ldap.profile(n)); },
+    async findByGuid(guid) { const n = Object.keys(directory).find((k) => directory[k].guid === guid && directory[k].inGroup); return n ? ldap.profile(n) : null; },
+    async listAuthorized() {
+      if (ldap.down) throw new Error('injoignable');
+      return new Map(Object.keys(directory).filter((n) => directory[n].inGroup).map((n) => [directory[n].guid, ldap.profile(n)]));
+    },
   };
   beforeEach(() => fresh({ ldap, env: { auth: { localEnabled: true, ldapEnabled: true }, ldap: { urls: ['ldaps://dc.test'], bindDn: 'x', bindPassword: 'x', baseDn: 'x', groupUsers: 'x', userFilter: '(u={{username}})' } } }));
 
@@ -121,6 +129,64 @@ describe('authentification AD (annuaire simulé)', () => {
     await createUser(prisma, 'alice');
     expect((await client(app).login('alice', 'AD-Password-4')).statusCode).toBe(401);
     expect((await client(app).login('alice', PASSWORD)).json().user.authSource).toBe('LOCAL');
+  });
+
+  it('trouve un agent AD jamais connecté et le provisionne à l\'ajout dans un espace', async () => {
+    await createUser(prisma, 'owner');
+    const o = client(app); await o.login('owner');
+    const ws = (await o.post('/api/workspaces', { name: 'Projet' })).json().workspace;
+    const look = (await o.get('/api/users/lookup?q=dupont')).json();
+    expect(look.users).toEqual([expect.objectContaining({ id: null, username: 'jdupont', source: 'LDAP', externalId: directory.jdupont.guid })]);
+    expect((await o.get('/api/users/lookup?q=externe')).json().users).toEqual([]); // hors groupe : invisible
+    const prov = await o.post('/api/users/provision', { externalId: directory.jdupont.guid });
+    expect(prov.statusCode).toBe(201);
+    expect((await o.put(`/api/workspaces/${ws.id}/members/${prov.json().user.id}`, { role: 'EDITOR' })).statusCode).toBe(200);
+    expect(await prisma.auditLog.count({ where: { action: 'user.provision' } })).toBe(1);
+    // Déjà connu : plus proposé comme compte d'annuaire ; GUID hors groupe : 404
+    expect((await o.get('/api/users/lookup?q=dupont')).json().users[0].id).toBe(prov.json().user.id);
+    expect((await o.post('/api/users/provision', { externalId: directory.externe.guid })).statusCode).toBe(404);
+    // Un simple utilisateur (propriétaire d'aucun espace) ne peut pas provisionner
+    const j = client(app); await j.login('jdupont', 'AD-Password-1');
+    expect((await j.post('/api/users/provision', { externalId: directory.alice.guid })).statusCode).toBe(403);
+  });
+
+  it('synchronisation AD : départ du groupe = compte désactivé et sessions révoquées, retour = réactivé', async () => {
+    const { syncDirectory } = await import('../src/server/lib/adsync.js');
+    const log = { info() {}, warn() {}, error() {} };
+    const j = client(app);
+    await j.login('jdupont', 'AD-Password-1');
+    await client(app).login('chef', 'AD-Password-2');
+    expect((await j.get('/api/auth/me')).statusCode).toBe(200);
+    directory.jdupont.inGroup = false;
+    try {
+      const r = await syncDirectory({ prisma, ldap, audit: app.audit, log });
+      expect(r.disabled).toEqual(['jdupont']);
+      expect((await j.get('/api/auth/me')).statusCode).toBe(401); // session révoquée immédiatement
+      expect((await prisma.user.findUnique({ where: { username: 'jdupont' } })).disabledReason).toBe('AD_SYNC');
+      expect((await client(app).get('/api/users/lookup?q=jdu')).statusCode).toBe(401);
+    } finally { directory.jdupont.inGroup = true; }
+    const back = await syncDirectory({ prisma, ldap, audit: app.audit, log });
+    expect(back.reenabled).toEqual(['jdupont']);
+    expect((await client(app).login('jdupont', 'AD-Password-1')).statusCode).toBe(200);
+    // Désactivation décidée par un administrateur : jamais levée par la synchronisation
+    await prisma.user.update({ where: { username: 'jdupont' }, data: { disabled: true, disabledReason: null } });
+    expect((await syncDirectory({ prisma, ldap, audit: app.audit, log })).reenabled).toEqual([]);
+    expect((await client(app).login('jdupont', 'AD-Password-1')).statusCode).toBe(401);
+  });
+
+  it('synchronisation AD : garde-fous (annuaire injoignable ou vide)', async () => {
+    const { syncDirectory } = await import('../src/server/lib/adsync.js');
+    const log = { info() {}, warn() {}, error() {} };
+    await client(app).login('jdupont', 'AD-Password-1');
+    ldap.down = true;
+    try { expect((await syncDirectory({ prisma, ldap, audit: app.audit, log })).aborted).toMatch(/injoignable/); } finally { ldap.down = false; }
+    const saved = Object.fromEntries(Object.entries(directory).map(([k, v]) => [k, v.inGroup]));
+    for (const v of Object.values(directory)) v.inGroup = false;
+    try {
+      const r = await syncDirectory({ prisma, ldap, audit: app.audit, log });
+      expect(r.aborted).toMatch(/garde-fou/);
+      expect(await prisma.user.count({ where: { disabled: true } })).toBe(0);
+    } finally { for (const [k, v] of Object.entries(saved)) directory[k].inGroup = v; }
   });
 
   it('les comptes locaux et AD coexistent', async () => {

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Plus, Trash2, Users, LayoutGrid, BookOpen } from 'lucide-react';
 import { api } from '../api';
@@ -67,13 +67,23 @@ function MemberAdd({ wsId, onAdded }) {
   const [results, setResults] = useState([]);
   const [role, setRole] = useState('EDITOR');
   const [err, setErr] = useState(null);
+  const [adDown, setAdDown] = useState(false);
+  const seq = useRef(0);
   const search = async (v) => {
     setQ(v);
     if (v.length < 2) return setResults([]);
-    setResults((await api.get(`/users/lookup?q=${encodeURIComponent(v)}`)).users);
+    const n = ++seq.current; // seule la dernière frappe compte (réponses de l'AD plus lentes)
+    try {
+      const r = await api.get(`/users/lookup?q=${encodeURIComponent(v)}`);
+      if (n === seq.current) { setResults(r.users); setAdDown(!!r.directoryError); }
+    } catch (x) { setErr(x); }
   };
   const add = async (u) => {
-    try { await api.put(`/workspaces/${wsId}/members/${u.id}`, { role }); setQ(''); setResults([]); onAdded(); } catch (x) { setErr(x); }
+    try {
+      // Agent AD jamais connecté : création de son compte à partir de l'annuaire, puis ajout
+      const id = u.id ?? (await api.post('/users/provision', { externalId: u.externalId })).user.id;
+      await api.put(`/workspaces/${wsId}/members/${id}`, { role }); setQ(''); setResults([]); onAdded();
+    } catch (x) { setErr(x); }
   };
   return (
     <div className="space-y-2">
@@ -87,11 +97,13 @@ function MemberAdd({ wsId, onAdded }) {
       {results.length > 0 && (
         <ul className="border border-gray-200 dark:border-slate-700 rounded-md divide-y divide-gray-100 dark:divide-slate-800">
           {results.map((u) => (
-            <li key={u.id}><button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-gray-200" onClick={() => add(u)}>{u.displayName} <span className="text-gray-400">({u.username})</span></button></li>
+            <li key={u.id ?? `ad-${u.externalId}`}><button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-gray-200" onClick={() => add(u)}>{u.displayName} <span className="text-gray-500 dark:text-gray-400">({u.username})</span>{!u.id && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200">annuaire AD</span>}</button></li>
           ))}
         </ul>
       )}
-      <p className="text-xs text-gray-500">Un compte AD apparaît ici après sa première connexion.</p>
+      <p className="text-xs text-gray-500">{adDown
+        ? 'Annuaire AD injoignable : seuls les comptes déjà connus sont proposés.'
+        : 'Les agents du groupe d\'accès AD sont proposés dès 3 caractères, même s\'ils ne se sont jamais connectés.'}</p>
     </div>
   );
 }
