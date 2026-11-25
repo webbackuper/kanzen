@@ -290,3 +290,21 @@ describe('journal d\'audit', () => {
     expect(entries.map((e) => `${e.action}:${e.outcome}`)).toEqual(expect.arrayContaining(['auth.login:failure', 'auth.login:success']));
   });
 });
+
+describe('arrêt du serveur', () => {
+  it('s\'arrête rapidement même avec une websocket connectée', async () => {
+    const { io } = await import('socket.io-client');
+    const ctx = await setup();
+    await createUser(ctx.prisma, 'alice');
+    const address = await ctx.app.listen({ host: '127.0.0.1', port: 0 });
+    const login = await fetch(`${address}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'KanZen' }, body: JSON.stringify({ username: 'alice', password: PASSWORD }) });
+    const cookie = login.headers.get('set-cookie').split(';')[0];
+    const socket = io(address, { extraHeaders: { cookie }, transports: ['websocket'], reconnection: false });
+    await new Promise((resolve, reject) => { socket.on('connect', resolve); socket.on('connect_error', reject); });
+    const t0 = Date.now();
+    await ctx.app.close();
+    expect(Date.now() - t0).toBeLessThan(2000);
+    socket.close();
+    await ctx.prisma.$disconnect();
+  });
+});

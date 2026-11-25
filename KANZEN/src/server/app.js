@@ -27,6 +27,8 @@ export async function buildApp({ cfg, prisma, ldap, logger } = {}) {
       redact: ['req.headers.cookie', 'req.headers.authorization', 'res.headers["set-cookie"]'],
     },
     trustProxy: cfg.trustProxy,
+    // À l'arrêt, ferme aussi les connexions HTTP keep-alive inactives
+    forceCloseConnections: 'idle',
     bodyLimit: 1024 * 1024,
     // Validation stricte : un champ inconnu est refusé (et non silencieusement supprimé)
     ajv: { customOptions: { removeAdditional: false, coerceTypes: 'array', useDefaults: true, allErrors: false } },
@@ -140,8 +142,10 @@ export async function buildApp({ cfg, prisma, ldap, logger } = {}) {
     });
   }
 
-  app.addHook('onClose', async () => {
-    realtime.io.close();
+  // Les websockets maintiennent le serveur HTTP ouvert : on les ferme AVANT l'arrêt de Fastify
+  app.addHook('preClose', async () => {
+    realtime.io.disconnectSockets(true);
+    await new Promise((resolve) => realtime.io.close(() => resolve()));
   });
 
   return app;

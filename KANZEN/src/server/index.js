@@ -17,12 +17,20 @@ const app = await buildApp({ cfg, prisma });
 const purge = setInterval(() => app.sessions.purgeExpired().catch((err) => app.log.warn({ err }, 'purge sessions')), 3600_000);
 purge.unref();
 
+let stopping = false;
 const shutdown = async (signal) => {
+  if (stopping) return;
+  stopping = true;
   app.log.info(`${signal} reçu, arrêt propre`);
+  // Filet de sécurité : sortie forcée si une requête reste bloquée
+  setTimeout(() => { app.log.warn('arrêt forcé après 10 s'); process.exit(1); }, 10_000).unref();
   clearInterval(purge);
-  await app.close();
-  await prisma.$disconnect();
-  process.exit(0);
+  try {
+    await app.close();
+    await prisma.$disconnect();
+  } finally {
+    process.exit(0);
+  }
 };
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
