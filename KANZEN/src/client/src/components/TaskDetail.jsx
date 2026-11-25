@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Trash2, Paperclip, Download } from 'lucide-react';
 import { api } from '../api';
-import { COLORS } from './TaskCard';
+import { COLORS, initials } from './TaskCard';
 import { ErrorBox, Loading, Modal, input, btnPrimary, btnGhost, btnDanger } from '../ui';
 
 const fmtSize = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} Mo` : `${Math.ceil(n / 1024)} ko`);
@@ -16,7 +16,7 @@ export function TaskDetail({ taskId, workspaceId, onClose, onChanged }) {
 
   const load = () => api.get(`/tasks/${taskId}`).then(({ task: t }) => {
     setTask(t);
-    setForm({ title: t.title, description: t.description, color: t.color, dueDate: t.dueDate?.slice(0, 10) ?? '', assigneeId: t.assigneeId ?? '' });
+    setForm({ title: t.title, description: t.description, color: t.color, dueDate: t.dueDate?.slice(0, 10) ?? '', assigneeIds: t.assignees.map((u) => u.id) });
   }, setError);
   useEffect(() => { load(); }, [taskId]); // load dépend uniquement de taskId
 
@@ -31,7 +31,7 @@ export function TaskDetail({ taskId, workspaceId, onClose, onChanged }) {
   const save = run(() => api.patch(`/tasks/${taskId}`, {
     title: form.title, description: form.description, color: form.color,
     dueDate: form.dueDate ? new Date(`${form.dueDate}T12:00:00Z`).toISOString() : null,
-    assigneeId: form.assigneeId || null,
+    assigneeIds: form.assigneeIds,
   }));
   const del = async () => {
     if (!window.confirm('Supprimer cette tâche ?')) return;
@@ -52,14 +52,27 @@ export function TaskDetail({ taskId, workspaceId, onClose, onChanged }) {
           <form onSubmit={save} className="space-y-3">
             <input className={input} value={form.title} onChange={set('title')} disabled={ro} required maxLength={300} aria-label="Titre" />
             <textarea className={`${input} min-h-[120px]`} value={form.description} onChange={set('description')} disabled={ro} placeholder="Description" maxLength={20000} />
-            <div className="grid grid-cols-3 gap-2">
+            <div>
+              <p className="text-xs text-gray-500 mb-1">Assignés {form.assigneeIds.length > 0 && `(${form.assigneeIds.length})`}</p>
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Assignés">
+                {members.map((m) => {
+                  const on = form.assigneeIds.includes(m.id);
+                  return (
+                    <button key={m.id} type="button" disabled={ro} aria-pressed={on}
+                      onClick={() => setForm({ ...form, assigneeIds: on ? form.assigneeIds.filter((x) => x !== m.id) : [...form.assigneeIds, m.id] })}
+                      className={`inline-flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full text-xs border transition-colors disabled:opacity-60 ${on
+                        ? 'bg-indigo-600 border-indigo-600 text-white'
+                        : 'bg-white dark:bg-slate-800 border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-200 hover:border-indigo-400'}`}>
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${on ? 'bg-white/25' : 'bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-200'}`}>{initials(m.displayName)}</span>
+                      {m.displayName}
+                    </button>
+                  );
+                })}
+                {members.length === 0 && <span className="text-xs text-gray-400">Aucun membre</span>}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
               <label className="text-xs text-gray-500">Échéance<input type="date" className={input} value={form.dueDate} onChange={set('dueDate')} disabled={ro} /></label>
-              <label className="text-xs text-gray-500">Assigné
-                <select className={input} value={form.assigneeId} onChange={set('assigneeId')} disabled={ro}>
-                  <option value="">—</option>
-                  {members.map((m) => <option key={m.id} value={m.id}>{m.displayName}</option>)}
-                </select>
-              </label>
               <label className="text-xs text-gray-500">Couleur
                 <select className={input} value={form.color} onChange={set('color')} disabled={ro}>
                   {Object.keys(COLORS).map((c) => <option key={c} value={c}>{c}</option>)}

@@ -49,8 +49,15 @@ try {
   await page.getByPlaceholder('Écrire un commentaire').fill('RAS');
   await page.getByRole('button', { name: 'Commenter' }).click();
   await page.getByText('RAS').waitFor();
+  // Affectation à plusieurs personnes
+  const group = page.getByRole('group', { name: 'Assignés' });
+  await group.getByRole('button', { name: /Alice Martin/ }).click();
+  await group.getByRole('button', { name: /Bob Durand/ }).click();
+  await page.getByRole('button', { name: 'Enregistrer' }).click();
+  await page.getByText('Assignés (2)').waitFor();
   await page.getByLabel('Fermer').click();
   await page.getByText('0/1').waitFor();
+  await page.locator('[title="Alice Martin, Bob Durand"]').waitFor();
 
   // Agenda et statistiques
   await page.getByRole('link', { name: 'Agenda' }).click();

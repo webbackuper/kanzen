@@ -10,18 +10,22 @@ const BORDER = { red: 'border-red-500', green: 'border-green-500', yellow: 'bord
 
 export function CalendarView() {
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
+  const [mine, setMine] = useState(false);
   // Grille du lundi précédant le 1er au dimanche suivant le dernier jour
   const from = startOfWeek(startOfMonth(month), { weekStartsOn: 1 });
   const to = endOfWeek(endOfMonth(month), { weekStartsOn: 1 });
   const key = format(month, 'yyyy-MM');
-  const { data, error } = useApi(() => api.get(`/calendar?from=${format(from, 'yyyy-MM-dd')}&to=${format(to, 'yyyy-MM-dd')}`), [key]);
+  const { data, error } = useApi(() => api.get(`/calendar?from=${format(from, 'yyyy-MM-dd')}&to=${format(to, 'yyyy-MM-dd')}${mine ? '&mine=true' : ''}`), [key, mine]);
   const tasks = data?.tasks ?? [];
 
   return (
     <div className="p-6 h-full flex flex-col max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold text-gray-800 dark:text-white capitalize">{format(month, 'MMMM yyyy', { locale: fr })}</h1>
-        <div className="flex gap-1">
+        <div className="flex gap-1 items-center">
+          <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300 mr-3">
+            <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> Mes tâches
+          </label>
           <button className={btnGhost} onClick={() => setMonth(addMonths(month, -1))} aria-label="Mois précédent"><ChevronLeft size={16} /></button>
           <button className={btnGhost} onClick={() => setMonth(startOfMonth(new Date()))}>Aujourd&apos;hui</button>
           <button className={btnGhost} onClick={() => setMonth(addMonths(month, 1))} aria-label="Mois suivant"><ChevronRight size={16} /></button>
@@ -37,7 +41,7 @@ export function CalendarView() {
               <div className="text-right text-xs text-gray-400 mb-1 font-mono">{format(day, 'd')}</div>
               <div className="flex flex-col gap-1">
                 {dayTasks.map((t) => (
-                  <Link key={t.id} to={`/b/${t.column.board.id}`} title={`${t.column.board.title} · ${t.column.title}`}
+                  <Link key={t.id} to={`/b/${t.column.board.id}`} title={`${t.column.board.title} · ${t.column.title}${t.assignees.length ? ` · ${t.assignees.map((u) => u.displayName).join(', ')}` : ''}`}
                     className={`text-xs p-1.5 rounded border-l-4 truncate bg-indigo-50 dark:bg-indigo-900/30 dark:text-gray-200 ${BORDER[t.color] ?? 'border-indigo-500'}`}>
                     {t.title}
                   </Link>

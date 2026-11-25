@@ -15,6 +15,26 @@ export const COLORS = {
   gray: 'bg-gray-100 dark:bg-slate-700/40 border-gray-300 dark:border-slate-600',
 };
 
+export const initials = (name) => (name.match(/\p{L}+/gu) ?? ['?']).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
+
+/** Pastilles des assignés, superposées (4 visibles au plus). */
+export function Avatars({ users, max = 4 }) {
+  if (!users.length) return null;
+  const shown = users.slice(0, max);
+  return (
+    <span className="flex -space-x-1.5" title={users.map((u) => u.displayName).join(', ')}>
+      {shown.map((u) => (
+        <span key={u.id} className="w-6 h-6 rounded-full ring-2 ring-white dark:ring-slate-800 bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-200 flex items-center justify-center text-[10px] font-bold">
+          {initials(u.displayName)}
+        </span>
+      ))}
+      {users.length > max && (
+        <span className="w-6 h-6 rounded-full ring-2 ring-white dark:ring-slate-800 bg-gray-200 dark:bg-slate-600 text-gray-700 dark:text-gray-200 flex items-center justify-center text-[10px] font-bold">+{users.length - max}</span>
+      )}
+    </span>
+  );
+}
+
 export function TaskCard({ task, onOpen, disabled }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id, data: { type: 'task', columnId: task.columnId }, disabled,
@@ -53,11 +73,7 @@ export function TaskCard({ task, onOpen, disabled }) {
           {task._count?.attachments > 0 && <span className="flex items-center gap-1"><Paperclip size={12} /> {task._count.attachments}</span>}
           {task._count?.comments > 0 && <span className="flex items-center gap-1"><MessageSquare size={12} /> {task._count.comments}</span>}
         </span>
-        {task.assignee && (
-          <span title={task.assignee.displayName} className="w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-200 flex items-center justify-center text-[10px] font-bold">
-            {task.assignee.displayName.split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase()}
-          </span>
-        )}
+        <Avatars users={task.assignees ?? []} />
       </div>
     </div>
   );

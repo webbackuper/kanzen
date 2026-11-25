@@ -8,8 +8,11 @@ const taskProps = {
   description: { type: 'string', maxLength: 20000 },
   color: { enum: COLORS },
   dueDate: { type: ['string', 'null'], format: 'date-time' },
-  assigneeId: { type: ['string', 'null'], format: 'uuid' },
+  // Affectation multiple : liste complète des assignés (remplace la liste existante)
+  assigneeIds: { type: 'array', maxItems: 25, uniqueItems: true, items: { type: 'string', format: 'uuid' } },
 };
+const assigneesInclude = { assignees: { orderBy: { assignedAt: 'asc' }, select: { user: { select: { id: true, username: true, displayName: true } } } } };
+const flatAssignees = (t) => ({ ...t, assignees: (t.assignees ?? []).map((a) => a.user) });
 
 export default async function taskRoutes(app) {
   const { prisma, authz, realtime } = app;
@@ -17,24 +20,36 @@ export default async function taskRoutes(app) {
   const boardOfColumn = async (columnId) => (await prisma.column.findUnique({ where: { id: columnId }, select: { boardId: true } })).boardId;
   const boardOfTask = async (taskId) => (await prisma.task.findUnique({ where: { id: taskId }, select: { column: { select: { boardId: true } } } })).column.boardId;
 
-  // L'assigné doit être membre de l'espace
-  async function checkAssignee(workspaceId, assigneeId) {
-    if (!assigneeId) return;
-    const user = await prisma.user.findUnique({ where: { id: assigneeId } });
-    if (!user || user.disabled || !(await authz.workspaceRole(user, workspaceId))) throw badRequest('Assigné non membre de l\'espace');
+  // Chaque assigné doit être un compte actif membre de l'espace
+  async function checkAssignees(workspaceId, ids) {
+    if (!ids?.length) return;
+    const users = await prisma.user.findMany({ where: { id: { in: ids } } });
+    if (users.length !== ids.length) throw badRequest('Assigné inconnu');
+    for (const u of users) {
+      if (u.disabled || !(await authz.workspaceRole(u, workspaceId))) throw badRequest(`${u.displayName} n'est pas membre de l'espace`);
+    }
   }
-  const toData = (b) => ({ ...b, ...(b.dueDate !== undefined ? { dueDate: b.dueDate ? new Date(b.dueDate) : null } : {}) });
+  const toData = ({ assigneeIds, ...b }) => ({
+    ...b,
+    ...(b.dueDate !== undefined ? { dueDate: b.dueDate ? new Date(b.dueDate) : null } : {}),
+    ...(assigneeIds !== undefined ? { assignees: { deleteMany: {}, create: assigneeIds.map((userId) => ({ userId })) } } : {}),
+  });
 
   app.post('/columns/:id/tasks', {
     ...auth,
     schema: { params: idParam, body: { type: 'object', required: ['title'], additionalProperties: false, properties: taskProps } },
   }, async (req, reply) => {
     const { workspaceId } = await authz.check(req.user, 'column', req.params.id, 'EDITOR');
-    await checkAssignee(workspaceId, req.body.assigneeId);
+    await checkAssignees(workspaceId, req.body.assigneeIds);
     const last = await prisma.task.findFirst({ where: { columnId: req.params.id }, orderBy: { position: 'desc' } });
-    const task = await prisma.task.create({
-      data: { ...toData(req.body), columnId: req.params.id, position: (last?.position ?? 0) + 1000, createdById: req.user.id },
-    });
+    const { assignees, ...data } = toData(req.body);
+    const task = flatAssignees(await prisma.task.create({
+      data: {
+        ...data, columnId: req.params.id, position: (last?.position ?? 0) + 1000, createdById: req.user.id,
+        ...(assignees ? { assignees: { create: assignees.create } } : {}),
+      },
+      include: assigneesInclude,
+    }));
     await prisma.taskEvent.create({ data: { taskId: task.id, toColumnId: task.columnId, actorId: req.user.id } });
     realtime.boardChanged(await boardOfColumn(task.columnId), 'task');
     return reply.code(201).send({ task });
@@ -45,14 +60,14 @@ export default async function taskRoutes(app) {
     const task = await prisma.task.findUnique({
       where: { id: req.params.id },
       include: {
-        assignee: { select: { id: true, username: true, displayName: true } },
+        ...assigneesInclude,
         createdBy: { select: { id: true, displayName: true } },
         subtasks: { orderBy: { position: 'asc' } },
         comments: { orderBy: { createdAt: 'asc' }, include: { author: { select: { id: true, displayName: true } } } },
         attachments: { orderBy: { uploadedAt: 'asc' }, select: { id: true, filename: true, mimetype: true, size: true, uploadedAt: true } },
       },
     });
-    return { task: { ...task, myRole: role } };
+    return { task: { ...flatAssignees(task), myRole: role } };
   });
 
   app.patch('/tasks/:id', {
@@ -60,8 +75,8 @@ export default async function taskRoutes(app) {
     schema: { params: idParam, body: { type: 'object', additionalProperties: false, minProperties: 1, properties: taskProps } },
   }, async (req) => {
     const { workspaceId } = await authz.check(req.user, 'task', req.params.id, 'EDITOR');
-    await checkAssignee(workspaceId, req.body.assigneeId);
-    const task = await prisma.task.update({ where: { id: req.params.id }, data: toData(req.body) });
+    await checkAssignees(workspaceId, req.body.assigneeIds);
+    const task = flatAssignees(await prisma.task.update({ where: { id: req.params.id }, data: toData(req.body), include: assigneesInclude }));
     realtime.boardChanged(await boardOfColumn(task.columnId), 'task');
     return { task };
   });

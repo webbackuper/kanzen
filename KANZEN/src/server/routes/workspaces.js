@@ -100,6 +100,8 @@ export default async function workspaceRoutes(app) {
     if (userId !== req.user.id) await authz.require(req.user, id, 'OWNER'); // on peut toujours quitter un espace
     await ensureAnotherOwner(id, userId);
     await prisma.workspaceMember.delete({ where: { userId_workspaceId: { userId, workspaceId: id } } });
+    // Un ancien membre n'est plus assigné aux tâches de l'espace
+    await prisma.taskAssignee.deleteMany({ where: { userId, task: { column: { board: { workspaceId: id } } } } });
     await audit(req, 'workspace.member_remove', { target: id, details: { userId } });
     return { ok: true };
   });

@@ -3,6 +3,8 @@ import { Parser } from 'json2csv';
 const uuid = { type: 'string', format: 'uuid' };
 const idParam = { type: 'object', required: ['id'], properties: { id: uuid } };
 const userSel = { select: { id: true, username: true, displayName: true } };
+const assigneesSel = { orderBy: { assignedAt: 'asc' }, select: { user: userSel } };
+const flat = (t) => ({ ...t, assignees: t.assignees.map((a) => a.user) });
 
 export default async function boardRoutes(app) {
   const { prisma, authz, realtime } = app;
@@ -20,7 +22,7 @@ export default async function boardRoutes(app) {
             tasks: {
               orderBy: { position: 'asc' },
               include: {
-                assignee: userSel,
+                assignees: assigneesSel,
                 subtasks: { orderBy: { position: 'asc' } },
                 _count: { select: { comments: true, attachments: true } },
               },
@@ -29,7 +31,8 @@ export default async function boardRoutes(app) {
         },
       },
     });
-    return { board: { ...board, myRole: role } };
+    const columns = board.columns.map((c) => ({ ...c, tasks: c.tasks.map(flat) }));
+    return { board: { ...board, columns, myRole: role } };
   });
 
   app.patch('/boards/:id', {
@@ -114,16 +117,16 @@ export default async function boardRoutes(app) {
     await authz.check(req.user, 'board', req.params.id, 'VIEWER');
     const tasks = await prisma.task.findMany({
       where: { column: { boardId: req.params.id } },
-      include: { column: { select: { title: true } }, assignee: userSel },
+      include: { column: { select: { title: true } }, assignees: assigneesSel },
       orderBy: [{ column: { position: 'asc' } }, { position: 'asc' }],
     });
     // Neutralisation de l'injection de formules (=, +, -, @) à l'ouverture dans un tableur
     const safe = (v) => (typeof v === 'string' && /^[=+\-@\t\r]/.test(v) ? `'${v}` : v);
     const rows = tasks.map((t) => ({
-      Colonne: safe(t.column.title), Titre: safe(t.title), Assigne: safe(t.assignee?.displayName ?? ''),
+      Colonne: safe(t.column.title), Titre: safe(t.title), Assignes: safe(t.assignees.map((a) => a.user.displayName).join(', ')),
       Echeance: t.dueDate?.toISOString().slice(0, 10) ?? '', Creation: t.createdAt.toISOString(), MiseAJour: t.updatedAt.toISOString(),
     }));
-    const csv = new Parser({ fields: ['Colonne', 'Titre', 'Assigne', 'Echeance', 'Creation', 'MiseAJour'], delimiter: ';' }).parse(rows);
+    const csv = new Parser({ fields: ['Colonne', 'Titre', 'Assignes', 'Echeance', 'Creation', 'MiseAJour'], delimiter: ';' }).parse(rows);
     return reply.header('content-type', 'text/csv; charset=utf-8')
       .header('content-disposition', 'attachment; filename="kanzen-export.csv"')
       .send(`\uFEFF${csv}`);
@@ -132,18 +135,19 @@ export default async function boardRoutes(app) {
   // --- Agenda : tâches avec échéance dans les espaces de l'utilisateur ---
   app.get('/calendar', {
     ...auth,
-    schema: { querystring: { type: 'object', required: ['from', 'to'], properties: { from: { type: 'string', format: 'date' }, to: { type: 'string', format: 'date' } } } },
+    schema: { querystring: { type: 'object', required: ['from', 'to'], properties: { from: { type: 'string', format: 'date' }, to: { type: 'string', format: 'date' }, mine: { type: 'boolean' } } } },
   }, async (req) => {
     const wsFilter = req.user.role === 'ADMIN' ? {} : { workspace: { members: { some: { userId: req.user.id } } } };
     const tasks = await prisma.task.findMany({
       where: {
         dueDate: { gte: new Date(req.query.from), lte: new Date(`${req.query.to}T23:59:59.999Z`) },
         column: { board: { archived: false, ...wsFilter } },
+        ...(req.query.mine ? { assignees: { some: { userId: req.user.id } } } : {}),
       },
-      select: { id: true, title: true, color: true, dueDate: true, assignee: userSel, column: { select: { title: true, board: { select: { id: true, title: true } } } } },
+      select: { id: true, title: true, color: true, dueDate: true, assignees: assigneesSel, column: { select: { title: true, board: { select: { id: true, title: true } } } } },
       orderBy: { dueDate: 'asc' },
       take: 1000,
     });
-    return { tasks };
+    return { tasks: tasks.map(flat) };
   });
 }

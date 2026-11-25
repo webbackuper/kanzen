@@ -32,7 +32,8 @@ const tasks = [
 ];
 for (const [j, [title, c, color]] of tasks.entries()) {
   const t = await prisma.task.create({
-    data: { title, color, columnId: cols[c].id, position: (j + 1) * 1000, assigneeId: j % 2 ? alice.id : null, createdById: admin.id, dueDate: new Date(Date.now() + (j + 2) * 86400_000) },
+    data: { title, color, columnId: cols[c].id, position: (j + 1) * 1000, createdById: admin.id, dueDate: new Date(Date.now() + (j + 2) * 86400_000),
+      assignees: { create: j % 2 ? [{ userId: alice.id }, ...(j === 3 ? [{ userId: admin.id }] : [])] : [] } },
   });
   await prisma.taskEvent.create({ data: { taskId: t.id, toColumnId: t.columnId, actorId: admin.id } });
 }

@@ -177,8 +177,45 @@ describe('contrôle d\'accès aux objets', () => {
 
   it('refuse d\'assigner un non-membre', async () => {
     const col = await firstColumn(editor, board);
-    const outsiderId = (await prisma.user.findUnique({ where: { username: 'outsider' } })).id;
-    expect((await editor.post(`/api/columns/${col.id}/tasks`, { title: 'T', assigneeId: outsiderId })).statusCode).toBe(400);
+    const ids = Object.fromEntries((await prisma.user.findMany()).map((u) => [u.username, u.id]));
+    expect((await editor.post(`/api/columns/${col.id}/tasks`, { title: 'T', assigneeIds: [ids.editor, ids.outsider] })).statusCode).toBe(400);
+    expect(await prisma.task.count()).toBe(0);
+  });
+
+  it('affecte une tâche à plusieurs personnes, modifie puis vide la liste', async () => {
+    const col = await firstColumn(editor, board);
+    const ids = Object.fromEntries((await prisma.user.findMany()).map((u) => [u.username, u.id]));
+    const created = await editor.post(`/api/columns/${col.id}/tasks`, { title: 'Équipe', assigneeIds: [ids.editor, ids.viewer, ids.owner] });
+    expect(created.statusCode).toBe(201);
+    const t = created.json().task;
+    expect(t.assignees.map((u) => u.username).sort()).toEqual(['editor', 'owner', 'viewer']);
+
+    const b = (await viewer.get(`/api/boards/${board.id}`)).json().board;
+    expect(b.columns[0].tasks[0].assignees).toHaveLength(3);
+
+    const upd = await editor.patch(`/api/tasks/${t.id}`, { assigneeIds: [ids.owner] });
+    expect(upd.json().task.assignees.map((u) => u.username)).toEqual(['owner']);
+    expect((await editor.patch(`/api/tasks/${t.id}`, { assigneeIds: [ids.owner, ids.owner] })).statusCode).toBe(400); // doublon
+    expect((await editor.patch(`/api/tasks/${t.id}`, { assigneeIds: [] })).json().task.assignees).toEqual([]);
+  });
+
+  it('un membre retiré de l\'espace n\'est plus assigné', async () => {
+    const col = await firstColumn(editor, board);
+    const ids = Object.fromEntries((await prisma.user.findMany()).map((u) => [u.username, u.id]));
+    const t = (await editor.post(`/api/columns/${col.id}/tasks`, { title: 'T', assigneeIds: [ids.editor, ids.viewer] })).json().task;
+    expect((await owner.del(`/api/workspaces/${board.workspaceId}/members/${ids.viewer}`)).statusCode).toBe(200);
+    expect((await editor.get(`/api/tasks/${t.id}`)).json().task.assignees.map((u) => u.username)).toEqual(['editor']);
+  });
+
+  it('l\'agenda filtre « mes tâches »', async () => {
+    const col = await firstColumn(editor, board);
+    const ids = Object.fromEntries((await prisma.user.findMany()).map((u) => [u.username, u.id]));
+    const due = new Date().toISOString();
+    await editor.post(`/api/columns/${col.id}/tasks`, { title: 'À moi', dueDate: due, assigneeIds: [ids.editor, ids.owner] });
+    await editor.post(`/api/columns/${col.id}/tasks`, { title: 'Pas à moi', dueDate: due, assigneeIds: [ids.owner] });
+    const d = due.slice(0, 10);
+    expect((await editor.get(`/api/calendar?from=${d}&to=${d}`)).json().tasks).toHaveLength(2);
+    expect((await editor.get(`/api/calendar?from=${d}&to=${d}&mine=true`)).json().tasks.map((t) => t.title)).toEqual(['À moi']);
   });
 
   it('seul un propriétaire supprime le tableau, et l\'espace garde un propriétaire', async () => {
