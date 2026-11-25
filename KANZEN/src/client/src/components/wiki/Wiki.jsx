@@ -38,7 +38,8 @@ function useWikiTree(workspaceId, onEvent) {
   eventRef.current = onEvent;
   const load = useCallback(() => {
     if (!workspaceId) return;
-    api.get(`/workspaces/${workspaceId}/wiki`).then(setTree, setError);
+    setError(null);
+    api.get(`/workspaces/${workspaceId}/wiki`).then((t) => { setTree(t); setError(null); }, setError);
   }, [workspaceId]);
   useEffect(() => {
     if (!workspaceId) return undefined;
@@ -121,8 +122,13 @@ function WikiShell({ workspaceId, currentId, ancestorIds = [], onEvent, children
           </form>
         </div>
         <nav aria-label="Pages du wiki" className="flex-1 overflow-y-auto p-2">
-          <ErrorBox error={error} />
-          {!tree ? <Loading /> : nodes.length === 0
+          {error && tree && <ErrorBox error={error} />}
+          {error && !tree ? (
+            <div className="space-y-2">
+              <ErrorBox error={error} />
+              <button type="button" className={btnGhost} onClick={reload}><RotateCcw size={16} /> Réessayer</button>
+            </div>
+          ) : !tree ? <Loading /> : nodes.length === 0
             ? <p className="text-sm text-gray-500 p-2">Aucune page.</p>
             : <ul>{nodes.map((n) => <TreeNode key={n.id} node={n} depth={0} currentId={currentId} canEdit={canEdit} onAdd={add} expanded={expanded} toggle={toggle} />)}</ul>}
         </nav>
@@ -133,7 +139,7 @@ function WikiShell({ workspaceId, currentId, ancestorIds = [], onEvent, children
           </div>
         )}
       </aside>
-      <section className="flex-1 overflow-y-auto">{typeof children === 'function' ? children({ tree, reloadTree: reload, add }) : children}</section>
+      <section className="flex-1 overflow-y-auto">{typeof children === 'function' ? children({ tree, error, reloadTree: reload, add }) : children}</section>
     </div>
   );
 }
@@ -143,8 +149,9 @@ export function WikiHome() {
   const { id } = useParams();
   return (
     <WikiShell workspaceId={id}>
-      {({ tree, add }) => {
-        if (!tree) return <Loading />;
+      {({ tree, error, add }) => {
+        // En erreur, le message et « Réessayer » sont dans le panneau de gauche : pas de chargement sans fin ici
+        if (!tree) return error ? <p className="p-8 text-sm text-gray-500">Le wiki de cet espace n&apos;a pas pu être chargé.</p> : <Loading />;
         const recent = [...tree.pages].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)).slice(0, 10);
         return (
           <div className="p-8 max-w-3xl mx-auto">
