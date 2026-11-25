@@ -3,8 +3,11 @@ import { io } from 'socket.io-client';
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
 
-const COLORS = ['#e11d48', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#4d7c0f'];
-export const colorOf = (id) => COLORS[[...String(id)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % COLORS.length];
+import { colorOf } from './colors';
+
+// Extensions TipTap de co-édition : chargées avec ce module, uniquement quand on passe en édition
+export { Collaboration } from '@tiptap/extension-collaboration';
+export { CollaborationCaret } from '@tiptap/extension-collaboration-caret';
 
 const asBytes = (v) => (v instanceof Uint8Array ? v : new Uint8Array(v));
 

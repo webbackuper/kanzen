@@ -5,9 +5,11 @@ import { api, setUnauthorizedHandler } from './api';
 import { Login, ChangePassword } from './components/Login';
 import { Workspaces, WorkspacePage, WikiIndex } from './components/Workspaces';
 import { KanbanBoard } from './components/KanbanBoard';
-import { BoardStats } from './components/BoardStats';
-import { CalendarView } from './components/CalendarView';
-import { AdminUsers, AdminAudit } from './components/Admin';
+// Pages secondaires chargées à la demande : recharts (statistiques) pèse à lui seul ~400 kB
+const BoardStats = lazy(() => import('./components/BoardStats').then((m) => ({ default: m.BoardStats })));
+const CalendarView = lazy(() => import('./components/CalendarView').then((m) => ({ default: m.CalendarView })));
+const AdminUsers = lazy(() => import('./components/Admin').then((m) => ({ default: m.AdminUsers })));
+const AdminAudit = lazy(() => import('./components/Admin').then((m) => ({ default: m.AdminAudit })));
 // Wiki chargé à la demande (éditeur riche volumineux)
 const wiki = () => import('./components/wiki/Wiki');
 const WikiHome = lazy(() => wiki().then((m) => ({ default: m.WikiHome })));

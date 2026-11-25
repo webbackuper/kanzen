@@ -7,7 +7,7 @@
     "dev:server": "NODE_ENV=development node --watch src/server/index.js",
     "dev:ui": "vite src/client",
     "build": "npm run build:ui",
-    "build:ui": "vite build src/client",
+    "build:ui": "vite build src/client && node scripts/precompress.js dist",
     "start": "node src/server/index.js",
     "lint": "eslint .",
     "test": "vitest run",

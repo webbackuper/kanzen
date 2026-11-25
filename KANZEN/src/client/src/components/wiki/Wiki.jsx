@@ -9,7 +9,9 @@ import {
 import { api } from '../../api';
 import { ErrorBox, Loading, Modal, btnDanger, btnGhost, btnPrimary, card, input, useApi } from '../../ui';
 import { WikiEditor } from './WikiEditor';
-import { openCollab, colorOf } from './collab';
+import { colorOf } from './colors';
+// Co-édition (Yjs) chargée à la demande, au passage en édition
+const loadCollab = () => import('./collab');
 import {
   AccessModal, Backlinks, HistoryModal, IconPicker, NewPageModal, Peers, TaskLinks, Toc, docHeadings, fmt,
 } from './WikiPanels';
@@ -59,9 +61,17 @@ function useWikiTree(workspaceId, onEvent) {
     if (!workspaceId) return undefined;
     load();
     const socket = io({ path: '/socket.io', withCredentials: true });
-    socket.on('connect', () => socket.emit('wiki:join', workspaceId));
-    socket.on('wiki:changed', (e) => { if (e.workspaceId === workspaceId) { load(); eventRef.current?.(e); } });
-    return () => socket.disconnect();
+    let timer = null;
+    let connectedOnce = false;
+    const reloadSoon = () => { clearTimeout(timer); timer = setTimeout(load, 250); }; // rafales regroupées
+    socket.on('connect', () => {
+      socket.emit('wiki:join', workspaceId);
+      // Reconnexion : rattrapage de l'arborescence et de la page affichée (modifications manquées pendant la coupure)
+      if (connectedOnce) { reloadSoon(); eventRef.current?.({ workspaceId, reason: 'resync' }); }
+      connectedOnce = true;
+    });
+    socket.on('wiki:changed', (e) => { if (e.workspaceId === workspaceId) { reloadSoon(); eventRef.current?.(e); } });
+    return () => { clearTimeout(timer); socket.disconnect(); };
   }, [workspaceId, load]);
   return { tree, error, reload: load };
 }
@@ -432,6 +442,7 @@ export function WikiPage({ user }) {
 
   // Modifications d'autres utilisateurs reçues en temps réel
   const onEvent = useCallback((e) => {
+    if (e.reason === 'resync') { setLinksKey((k) => k + 1); if (!editingRef.current) load(); return; }
     if (e.reason === 'links') { setLinksKey((k) => k + 1); return; }
     if (e.pageId !== id) { setLinksKey((k) => k + 1); return; }
     if (e.reason === 'purge') { navigate(-1); return; }
@@ -459,14 +470,15 @@ export function WikiPage({ user }) {
     setDraft({ title: p.title, icon: p.icon ?? null, content: p.content });
     setDirty(false); setConflict(null); setNotice(null); setSession(null); setEditing(true);
     if (!user) { setSession(false); return; }
-    openCollab(p.id, user, {
+    loadCollab().then((m) => m.openCollab(p.id, user, {
       onPeers: setPeers,
       onReset: () => {
         closeSession(); setEditing(false); setDirty(false);
         setNotice('La page a été restaurée ou placée dans la corbeille par un autre utilisateur : l\'édition a été fermée.');
         load();
       },
-    }).then((s) => {
+    }).then((s) => ({ s, ext: { Collaboration: m.Collaboration, CollaborationCaret: m.CollaborationCaret } }))).then(({ s, ext }) => {
+      s.extensions = ext;
       if (!editingRef.current) { s.close(); return; }
       if (s.seed) { s.meta.set('title', p.title); s.meta.set('icon', p.icon ?? ''); } else {
         setDraft((d) => ({ ...d, title: s.meta.get('title') ?? d.title, icon: s.meta.get('icon') || null }));
@@ -541,7 +553,7 @@ export function WikiPage({ user }) {
   if (!page) return error ? <div className="p-6"><ErrorBox error={error} /></div> : <Loading />;
   const canEdit = page.myRole !== 'VIEWER' && !page.deletedAt;
   const isOwner = page.myRole === 'OWNER';
-  const collab = session ? { ydoc: session.ydoc, provider: session.provider, seed: session.seed, user: { name: user.displayName, color: colorOf(user.id) } } : undefined;
+  const collab = session ? { ydoc: session.ydoc, provider: session.provider, seed: session.seed, extensions: session.extensions, user: { name: user.displayName, color: colorOf(user.id) } } : undefined;
 
   return (
     <WikiShell workspaceId={page.workspaceId} currentId={page.id} ancestorIds={page.breadcrumb.map((b) => b.id)} onEvent={onEvent}>

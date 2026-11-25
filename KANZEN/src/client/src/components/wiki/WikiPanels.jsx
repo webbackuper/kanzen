@@ -1,14 +1,12 @@
 // Panneaux et fenêtres du wiki : nouvelle page (modèles, import), icône, sommaire, historique avec comparaison,
 // accès restreint, rétroliens, tâches liées.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { diffWordsWithSpace } from 'diff';
 import { FileText, FileUp, GitCompare, Link2, Lock, Plus, RotateCcw, Search, SquareKanban, Unlink } from 'lucide-react';
 import { api } from '../../api';
 import { ErrorBox, Loading, Modal, ROLE_LABEL, btnGhost, btnPrimary, card, input, useApi } from '../../ui';
 import { WikiEditor } from './WikiEditor';
 import { TEMPLATES } from './templates';
-import { markdownToPage } from './markdownImport';
 
 export const fmt = (d) => new Date(d).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -134,6 +132,7 @@ export function NewPageModal({ workspaceId, parentId, parentTitle, onClose, onCr
     if (!files.length) return;
     setBusy(true);
     try {
+      const { markdownToPage } = await import('./markdownImport'); // marked chargé à la demande
       let first = null;
       for (const f of files) {
         if (f.size > 1.5 * 1024 * 1024) throw new Error(`« ${f.name} » dépasse 1,5 Mo`);
@@ -168,7 +167,13 @@ export function NewPageModal({ workspaceId, parentId, parentTitle, onClose, onCr
 
 // --- Historique, avec comparaison de versions ---
 function DiffView({ before, after }) {
-  const parts = useMemo(() => diffWordsWithSpace(before, after), [before, after]);
+  const [parts, setParts] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    import('diff').then((m) => alive && setParts(m.diffWordsWithSpace(before, after))); // chargé à la demande
+    return () => { alive = false; };
+  }, [before, after]);
+  if (!parts) return <Loading />;
   if (!parts.some((p) => p.added || p.removed)) return <p className="text-sm text-gray-500">Aucune différence de texte.</p>;
   return (
     <div className="text-sm whitespace-pre-wrap leading-relaxed text-gray-800 dark:text-gray-200">

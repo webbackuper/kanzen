@@ -156,7 +156,8 @@ model Task {
   events      TaskEvent[]
   wikiLinks   WikiTaskLink[]
 
-  @@index([columnId])
+  /// Chargement d'un tableau : cartes d'une colonne triées par position
+  @@index([columnId, position])
   @@index([dueDate])
 }
 
@@ -210,7 +211,7 @@ model Comment {
   authorId  String?  @db.Uuid
   author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
 
-  @@index([taskId])
+  @@index([taskId, createdAt])
 }
 
 /// Historique des déplacements (alimente les statistiques)
@@ -225,6 +226,8 @@ model TaskEvent {
 
   @@index([taskId])
   @@index([timestamp])
+  /// Statistiques : arrivées dans une colonne sur une période
+  @@index([toColumnId, timestamp])
 }
 
 /// Journal d'audit sécurité (connexions, administration). Aussi émis en JSON sur stdout (journald / SIEM).

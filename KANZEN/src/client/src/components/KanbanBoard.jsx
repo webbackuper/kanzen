@@ -6,7 +6,7 @@ import { io } from 'socket.io-client';
 import { BarChart3, Download, Plus } from 'lucide-react';
 import { Column } from './Column';
 import { TaskDetail } from './TaskDetail';
-import { api } from '../api';
+import { api, setSocketId } from '../api';
 import { ErrorBox, Loading, btnGhost, btnPrimary, input } from '../ui';
 
 export function KanbanBoard() {
@@ -28,9 +28,24 @@ export function KanbanBoard() {
     load();
     // Temps réel : le serveur authentifie la websocket par le cookie de session
     const socket = io({ path: '/socket.io', withCredentials: true });
-    socket.on('connect', () => socket.emit('board:join', id));
-    socket.on('board:updated', (e) => e.boardId === id && load());
-    return () => socket.disconnect();
+    let timer = null;
+    let connectedOnce = false;
+    // Rafale de modifications (réunion, déplacements successifs) : un seul rechargement après 250 ms de calme
+    const reloadSoon = () => { clearTimeout(timer); timer = setTimeout(load, 250); };
+    socket.on('connect', () => {
+      setSocketId(socket.id);
+      socket.emit('board:join', id);
+      // Reconnexion (veille du poste, coupure réseau, redémarrage du service) : rattrapage des modifications manquées
+      if (connectedOnce) reloadSoon();
+      connectedOnce = true;
+    });
+    socket.on('board:updated', (e) => {
+      if (e.boardId !== id) return;
+      // Écho de notre propre déplacement : déjà appliqué localement (mise à jour optimiste)
+      if (e.reason === 'move' && e.origin && e.origin === socket.id) return;
+      reloadSoon();
+    });
+    return () => { clearTimeout(timer); setSocketId(null); socket.disconnect(); };
   }, [id, load]);
 
   const sensors = useSensors(

@@ -175,6 +175,57 @@ describe('contrôle d\'accès aux objets', () => {
     expect((await outsider.post(`/api/tasks/${t.id}/move`, { columnId: foreignCol.id })).statusCode).toBe(404);
   });
 
+  it('garde un ordre stable après 60 insertions au même endroit (renumérotation)', async () => {
+    const b = (await editor.get(`/api/boards/${board.id}`)).json().board;
+    const col = b.columns[1].id;
+    const mk = async (title) => (await editor.post(`/api/columns/${b.columns[0].id}/tasks`, { title })).json().task;
+    const top = await mk('haut');
+    const bottom = await mk('bas');
+    await editor.post(`/api/tasks/${top.id}/move`, { columnId: col });
+    await editor.post(`/api/tasks/${bottom.id}/move`, { columnId: col, afterId: top.id });
+    // Chaque nouvelle carte est glissée juste au-dessus de « bas » : l'écart est divisé par deux à chaque fois
+    const expected = [top.id];
+    for (let i = 0; i < 60; i++) {
+      const t = await mk(`c${i}`);
+      const r = await editor.post(`/api/tasks/${t.id}/move`, { columnId: col, beforeId: bottom.id });
+      expect(r.statusCode).toBe(200);
+      expected.push(t.id);
+    }
+    expected.push(bottom.id);
+    const cards = await prisma.task.findMany({ where: { columnId: col }, orderBy: { position: 'asc' } });
+    expect(cards.map((c) => c.id)).toEqual(expected);
+    expect(new Set(cards.map((c) => c.position)).size).toBe(cards.length); // aucune position en double
+  });
+
+  it('sérialise deux déplacements simultanés dans la même colonne', async () => {
+    const b = (await editor.get(`/api/boards/${board.id}`)).json().board;
+    const col = b.columns[2].id;
+    const ids = [];
+    for (const title of ['a', 'b', 'c']) ids.push((await editor.post(`/api/columns/${b.columns[0].id}/tasks`, { title })).json().task.id);
+    await editor.post(`/api/tasks/${ids[0]}/move`, { columnId: col });
+    const [r1, r2] = await Promise.all([
+      editor.post(`/api/tasks/${ids[1]}/move`, { columnId: col, afterId: ids[0] }),
+      editor.post(`/api/tasks/${ids[2]}/move`, { columnId: col, afterId: ids[0] }),
+    ]);
+    expect([r1.statusCode, r2.statusCode]).toEqual([200, 200]);
+    const cards = await prisma.task.findMany({ where: { columnId: col } });
+    expect(new Set(cards.map((c) => c.position)).size).toBe(3);
+  });
+
+  it('transmet l\'origine (X-Socket-Id) dans l\'événement temps réel', async () => {
+    const b = (await editor.get(`/api/boards/${board.id}`)).json().board;
+    const t = (await editor.post(`/api/columns/${b.columns[0].id}/tasks`, { title: 'echo' })).json().task;
+    const seen = [];
+    const io = app.realtime.io;
+    const orig = io.to.bind(io);
+    io.to = (room) => ({ emit: (ev, payload) => { seen.push(payload); return orig(room).emit(ev, payload); } });
+    try {
+      await editor.raw('POST', `/api/tasks/${t.id}/move`, { columnId: b.columns[1].id }, { 'x-socket-id': 'abc-123' });
+      await editor.raw('POST', `/api/tasks/${t.id}/move`, { columnId: b.columns[0].id }, { 'x-socket-id': 'bad id!' });
+    } finally { io.to = orig; }
+    expect(seen.map((e) => e.origin)).toEqual(['abc-123', null]);
+  });
+
   it('refuse d\'assigner un non-membre', async () => {
     const col = await firstColumn(editor, board);
     const ids = Object.fromEntries((await prisma.user.findMany()).map((u) => [u.username, u.id]));
