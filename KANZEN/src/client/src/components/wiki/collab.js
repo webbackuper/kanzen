@@ -58,7 +58,8 @@ export function openCollab(pageId, user, { onPeers, onReset } = {}) {
           seed: ack.seed,
           meta: ydoc.getMap('meta'),
           peers,
-          close: () => { closed = true; cleanup(); },
+          // discard : abandon explicite (« Annuler ») ; sinon, le serveur enregistre ce qui n'a pas été enregistré
+          close: ({ discard = false } = {}) => { closed = true; cleanup({ discard }); },
         });
       } else {
         // Reconnexion : on republie notre état complet (fusionné sans perte par Yjs, ou nouvelle initialisation)
@@ -68,10 +69,10 @@ export function openCollab(pageId, user, { onPeers, onReset } = {}) {
     socket.on('connect', join);
     socket.on('connect_error', () => { if (!joined) { cleanup(); reject(new Error('Connexion temps réel impossible')); } });
 
-    function cleanup() {
+    function cleanup({ discard = false } = {}) {
       try {
         awarenessProtocol.removeAwarenessStates(awareness, [ydoc.clientID], 'local'); // diffusé par l'écouteur « update »
-        if (socket.connected) socket.emit('wiki-collab:leave', { pageId });
+        if (socket.connected) socket.emit('wiki-collab:leave', { pageId, discard });
       } catch { /* fermeture */ }
       socket.disconnect();
       awareness.destroy();

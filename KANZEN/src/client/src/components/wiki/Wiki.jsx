@@ -403,6 +403,12 @@ function MoreMenu({ items }) {
   );
 }
 
+// Brouillons locaux (localStorage, par page) : filet de sécurité côté poste. Toute erreur de stockage est ignorée.
+const draftKey = (id) => `kz-wiki-draft:${id}`;
+function writeLocalDraft(id, d) { try { localStorage.setItem(draftKey(id), JSON.stringify({ ...d, at: new Date().toISOString() })); } catch { /* stockage plein ou interdit */ } }
+function readLocalDraft(id) { try { const d = JSON.parse(localStorage.getItem(draftKey(id)) ?? 'null'); return d?.content ? d : null; } catch { return null; } }
+function clearLocalDraft(id) { try { localStorage.removeItem(draftKey(id)); } catch { /* idem */ } }
+
 // --- Page : lecture et édition (co-édition en temps réel quand c'est possible) ---
 export function WikiPage({ user }) {
   const { id } = useParams();
@@ -428,7 +434,7 @@ export function WikiPage({ user }) {
 
   const load = useCallback(() => api.get(`/wiki/pages/${id}`).then((r) => { setPage(r.page); setError(null); }, setError), [id]);
 
-  const closeSession = () => { sessionRef.current?.close?.(); sessionRef.current = null; setSession(null); setPeers([]); };
+  const closeSession = (opts) => { sessionRef.current?.close?.(opts); sessionRef.current = null; setSession(null); setPeers([]); };
   useEffect(() => { closeSession(); setEditing(false); setDirty(false); setConflict(null); setNotice(null); setModal(null); load(); }, [id, load]);
   useEffect(() => () => closeSession(), []);
 
@@ -457,6 +463,24 @@ export function WikiPage({ user }) {
       }
     } else load();
   }, [id, load, navigate, user?.displayName]);
+
+  // Brouillon local : copie de la saisie dans le navigateur toutes les 2 s (coupure réseau, plantage, onglet fermé
+  // en édition seule). Proposé à la réouverture de la page ; effacé à l'enregistrement ou à l'abandon.
+  useEffect(() => {
+    if (!editing || !dirty || !draft) return undefined;
+    const t = setTimeout(() => writeLocalDraft(id, { ...draft, version: page?.version }), 2000);
+    return () => clearTimeout(t);
+  }, [editing, dirty, draft, id, page?.version]);
+  const [localDraft, setLocalDraft] = useState(null);
+  useEffect(() => { setLocalDraft(readLocalDraft(id)); }, [id]);
+  const resumeDraft = () => {
+    const d = localDraft;
+    setLocalDraft(null);
+    startEdit({ ...page, title: d.title, icon: d.icon, content: d.content });
+    setDirty(true);
+    if (d.version !== page.version) setNotice('La page a été modifiée depuis ce brouillon : relisez avant d\'enregistrer (la version actuelle reste dans l\'historique).');
+  };
+  const dropDraft = () => { clearLocalDraft(id); setLocalDraft(null); };
 
   // Protection contre la perte de saisie
   useEffect(() => {
@@ -496,10 +520,11 @@ export function WikiPage({ user }) {
 
   const cancel = () => {
     const msg = peers.length
-      ? 'Quitter l\'édition ? Vos modifications non enregistrées restent visibles des autres éditeurs, qui peuvent les enregistrer.'
+      ? 'Quitter l\'édition ? Les modifications restent dans le document partagé : elles seront enregistrées par les autres éditeurs ou automatiquement au départ du dernier.'
       : 'Abandonner vos modifications ?';
     if ((dirty || peers.length) && !window.confirm(msg)) return;
-    closeSession(); setEditing(false); setDirty(false); setConflict(null); setNotice(null);
+    // Seul éditeur : abandon explicite, rien n'est enregistré automatiquement
+    closeSession({ discard: !peers.length }); clearLocalDraft(id); setEditing(false); setDirty(false); setConflict(null); setNotice(null);
   };
 
   const save = async (version = page.version, retried = false) => {
@@ -507,7 +532,7 @@ export function WikiPage({ user }) {
     try {
       const r = await api.patch(`/wiki/pages/${id}`, { version, title: draft.title.trim() || 'Sans titre', icon: draft.icon || null, content: draft.content });
       setPage((p) => ({ ...p, ...r.page }));
-      closeSession(); setEditing(false); setDirty(false); setConflict(null); setNotice(null);
+      closeSession(); clearLocalDraft(id); setEditing(false); setDirty(false); setConflict(null); setNotice(null);
     } catch (x) {
       if (x.status === 409 && x.code === 'WIKI_CONFLICT') {
         // En co-édition, l'autre enregistrement porte sur le même document partagé : on enregistre par-dessus
@@ -528,7 +553,7 @@ export function WikiPage({ user }) {
     const latest = (await api.get(`/wiki/pages/${id}`)).page;
     await save(latest.version); // la version de l'autre utilisateur reste dans l'historique
   };
-  const discardMine = async () => { closeSession(); setEditing(false); setDirty(false); setConflict(null); await load(); };
+  const discardMine = async () => { closeSession({ discard: !peers.length }); clearLocalDraft(id); setEditing(false); setDirty(false); setConflict(null); await load(); };
 
   const uploadFile = async (file) => {
     try {
@@ -584,6 +609,15 @@ export function WikiPage({ user }) {
                   </div>
                 </div>
               )}
+              {localDraft && !editing && canEdit && (
+                <div role="status" className="mb-4 p-3 rounded-md bg-amber-50 dark:bg-amber-900/30 text-amber-900 dark:text-amber-100 text-sm flex flex-wrap justify-between items-center gap-2">
+                  <span>Un brouillon non enregistré du {fmt(localDraft.at)} existe pour cette page sur ce poste.</span>
+                  <span className="flex gap-2">
+                    <button type="button" className={btnPrimary} onClick={resumeDraft}>Reprendre le brouillon</button>
+                    <button type="button" className={btnGhost} onClick={dropDraft}>Supprimer</button>
+                  </span>
+                </div>
+              )}
               {notice && !conflict && (
                 <div role="status" className="mb-4 p-3 rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 text-sm flex justify-between gap-2">
                   <span>{notice}</span><button type="button" onClick={() => setNotice(null)} aria-label="Fermer le message"><X size={14} /></button>
@@ -601,6 +635,9 @@ export function WikiPage({ user }) {
                 <div className="flex flex-wrap items-center gap-1 kz-noprint">
                   {editing ? <>
                     <Peers peers={peers} />
+                    <span role="status" aria-live="polite" className={`text-xs mr-1 ${dirty ? 'text-amber-700 dark:text-amber-300' : 'text-gray-500'}`}>
+                      {saving ? '' : dirty ? (session ? 'Non enregistré (sauvegarde auto. à la fermeture)' : 'Modifications non enregistrées') : 'Aucune modification'}
+                    </span>
                     <button type="button" className={btnPrimary} onClick={() => save()} disabled={saving || session === null}><Save size={16} /> {saving ? 'Enregistrement…' : 'Enregistrer'}</button>
                     <button type="button" className={btnGhost} onClick={cancel}><X size={16} /> {peers.length ? 'Quitter' : 'Annuler'}</button>
                   </> : <>
