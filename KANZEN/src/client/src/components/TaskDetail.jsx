@@ -42,7 +42,7 @@ export function TaskDetail({ taskId, workspaceId, onClose, onChanged }) {
     if (el.files[0]) await api.upload(`/tasks/${taskId}/attachments`, el.files[0]);
     el.value = '';
   });
-  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const set = (k) => (e) => { const v = e.target.value; setForm((f) => ({ ...f, [k]: v })); };
 
   return (
     <Modal title={ro ? task.title : 'Modifier la tâche'} onClose={onClose} wide>
@@ -59,7 +59,7 @@ export function TaskDetail({ taskId, workspaceId, onClose, onChanged }) {
                   const on = form.assigneeIds.includes(m.id);
                   return (
                     <button key={m.id} type="button" disabled={ro} aria-pressed={on}
-                      onClick={() => setForm({ ...form, assigneeIds: on ? form.assigneeIds.filter((x) => x !== m.id) : [...form.assigneeIds, m.id] })}
+                      onClick={() => setForm((f) => ({ ...f, assigneeIds: f.assigneeIds.includes(m.id) ? f.assigneeIds.filter((x) => x !== m.id) : [...f.assigneeIds, m.id] }))}
                       className={`inline-flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full text-xs border transition-colors disabled:opacity-60 ${on
                         ? 'bg-indigo-600 border-indigo-600 text-white'
                         : 'bg-white dark:bg-slate-800 border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-200 hover:border-indigo-400'}`}>

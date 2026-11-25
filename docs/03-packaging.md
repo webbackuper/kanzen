@@ -33,7 +33,7 @@ Rien n'est téléchargé à l'installation, au démarrage ou à l'exécution (t�
 |---|---|---|
 | `/opt/kanzen/node`, `/opt/kanzen/app` | Runtime et application | root, lecture seule |
 | `/etc/kanzen/kanzen.env` | Configuration (fichier de conf protégé à la mise à jour) | `root:kanzen 0640` |
-| `/etc/kanzen/secrets/` | Secrets (`LDAP_BIND_PASSWORD_FILE`…) | `root:kanzen 0750` |
+| `/etc/kanzen/secrets/` | Secrets (`LDAP_BIND_PASSWORD_FILE`, `DATABASE_URL_FILE`) | `root:kanzen 0750` |
 | `/etc/kanzen/ca/`, `/etc/kanzen/tls/` | CA de la PKI interne, certificat du serveur web | `root:kanzen 0750` |
 | `/var/lib/kanzen/uploads` | Pièces jointes | `kanzen 0750` |
 | `/var/backups/kanzen` | Sauvegardes | `kanzen 0750` |
@@ -76,15 +76,16 @@ kanzenctl restore <archive>       restauration (service arrêté)
 | Contrôle | Debian 12 (.deb) | Rocky Linux 9 (.rpm) |
 |---|---|---|
 | Installation, compte `kanzen`, arborescence et droits | OK | OK |
-| `kanzenctl migrate` (2 migrations) | OK | OK |
+| `kanzenctl migrate` (3 migrations, base vide) | OK | OK |
 | `kanzenctl create-admin`, politique de mot de passe appliquée | OK | OK |
 | `kanzenctl check` : « Tout est conforme » | OK | OK |
 | Démarrage sous l'utilisateur `kanzen`, `/api/health`, interface | OK | OK |
 | Connexion : cookie `__Host-` `HttpOnly; Secure; SameSite=Strict` | OK | OK |
+| Wiki : création d'une page, recherche plein texte en français | OK | OK |
 | `kanzenctl backup` | OK | non testé (pg_dump absent de l'image) |
 | Désinstallation, données conservées | OK | OK |
 
-**Non testé en conteneur** : l'exécution réelle sous systemd, le durcissement des unités et SELinux en mode *enforcing*. Ces points sont à valider à la recette sur une VM de la cible. Le plan de déploiement (étape 4) les détaille.
+**Non testé en conteneur** : l'exécution réelle sous systemd, le durcissement des unités et SELinux en mode *enforcing*. Ces points sont à valider à la recette sur une VM de la cible. Le [plan de déploiement](04-plan-de-deploiement.md) les détaille.
 
 ## Option conteneur
 
