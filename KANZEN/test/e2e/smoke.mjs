@@ -20,6 +20,14 @@ try {
   const page = await browser.newPage();
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   page.on('pageerror', (e) => errors.push(e.message));
+  // Diagnostic en cas d'échec : réponses HTTP en erreur
+  const httpErrors = [];
+  page.on('response', async (r) => { if (r.status() >= 400) httpErrors.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname} ${(await r.text().catch(() => '')).slice(0, 200)}`); });
+  globalThis.dumpState = async () => {
+    console.error('Réponses en erreur :', httpErrors);
+    console.error('URL :', page.url());
+    console.error('Dialogue :', await page.locator('[role=dialog]').innerText({ timeout: 1000 }).catch(() => '(aucun)'));
+  };
 
   await page.goto(BASE);
   await page.getByLabel('Identifiant').fill('alice');
@@ -105,6 +113,7 @@ try {
   console.log('E2E OK');
 } catch (err) {
   console.error('E2E KO :', err.message, errors);
+  await globalThis.dumpState?.();
   process.exitCode = 1;
 } finally {
   await browser?.close();
