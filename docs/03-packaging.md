@@ -76,12 +76,13 @@ kanzenctl restore <archive>       restauration (service arrêté)
 | Contrôle | Debian 12 (.deb) | Rocky Linux 9 (.rpm) |
 |---|---|---|
 | Installation, compte `kanzen`, arborescence et droits | OK | OK |
-| `kanzenctl migrate` (3 migrations, base vide) | OK | OK |
+| `kanzenctl migrate` (4 migrations, base vide) | OK | OK |
 | `kanzenctl create-admin`, politique de mot de passe appliquée | OK | OK |
 | `kanzenctl check` : « Tout est conforme » | OK | OK |
 | Démarrage sous l'utilisateur `kanzen`, `/api/health`, interface | OK | OK |
 | Connexion : cookie `__Host-` `HttpOnly; Secure; SameSite=Strict` | OK | OK |
 | Wiki : création d'une page, recherche plein texte en français | OK | OK |
+| Wiki v2 : favori, export ZIP d'une section | OK | OK |
 | `kanzenctl backup` | OK | non testé (pg_dump absent de l'image) |
 | Désinstallation, données conservées | OK | OK |
 

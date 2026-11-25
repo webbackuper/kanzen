@@ -483,7 +483,7 @@ stat -c '%U:%G %a %n' /etc/kanzen /etc/kanzen/kanzen.env /etc/kanzen/secrets /et
 ### 4.4 Initialisation et diagnostic
 
 ```bash
-kanzenctl migrate              # crée le schéma (3 migrations à ce jour)
+kanzenctl migrate              # crée le schéma (4 migrations à ce jour)
 kanzenctl check jdupont        # configuration, base, stockage, bind AD, groupes, recherche d'un compte réel
 ```
 
@@ -596,12 +596,16 @@ Chaque contrôle est consigné (OK / KO / commentaire) dans le procès-verbal de
 | F2 | Créer, déplacer (glisser-déposer) et affecter une tâche à plusieurs personnes ; échéance, sous-tâches, commentaires, pièce jointe |
 | F3 | Mise à jour en temps réel entre deux navigateurs sur le même tableau |
 | F4 | Agenda (« Mes tâches »), statistiques, export CSV ouvert dans Excel (accents corrects) |
-| F5 | Wiki : arborescence de pages et sous-pages, mise en forme (titres, listes, tableaux, code, liens), image insérée |
-| F6 | Wiki : deux éditeurs sur la même page ; le second est averti et choisit sa version, sans perte silencieuse |
-| F7 | Wiki : historique, restauration d'une version antérieure |
+| F5 | Wiki : arborescence de pages et sous-pages (glisser-déposer), modèle de page, menu « / », code coloré avec « Copier », image collée (Ctrl+V), pièce jointe PDF téléchargée |
+| F6 | Wiki : co-édition — deux éditeurs sur la même page voient la frappe et le curseur de l'autre ; un Lecteur ne peut pas rejoindre l'édition |
+| F7 | Wiki : historique, comparaison visuelle de deux versions, restauration d'une version antérieure |
 | F8 | Wiki : recherche (« sauvegarde » trouve « sauvegardes »), extrait surligné |
 | F9 | Wiki : corbeille, restauration avec sous-pages ; suppression définitive par un propriétaire |
-| F10 | Wiki : export Markdown d'une page |
+| F10 | Wiki : export Markdown d'une page, export ZIP d'une section, impression / PDF, import d'un fichier .md |
+| F11 | Wiki : lien `[[` vers une autre page, « Pages qui pointent ici » sur la page cible |
+| F12 | Wiki ↔ Kanban : tâche liée à une page, visible dans la fiche de la tâche et en bas de la page |
+| F13 | Wiki : accès restreint (« ⋯ » → « Restreindre l'accès… ») — un membre non coché ne voit la page ni dans l'arbre, ni dans la recherche, ni par son URL ou ses fichiers |
+| F14 | Wiki : favori, « Consultées récemment », page affichée en tête de l'accueil |
 
 ---
 
