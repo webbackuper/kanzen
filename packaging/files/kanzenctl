@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# kanzenctl : outils d'administration KanZen (à lancer en root)
+set -euo pipefail
+
+APP=/opt/kanzen/app
+NODE=/opt/kanzen/node/bin/node
+ENV_FILE=/etc/kanzen/kanzen.env
+PRISMA="$APP/node_modules/prisma/build/index.js"
+
+die() { echo "kanzenctl: $*" >&2; exit 1; }
+[[ $EUID -eq 0 ]] || die "à lancer en root (sudo kanzenctl …)"
+[[ -r $ENV_FILE ]] || die "$ENV_FILE introuvable"
+
+# Lecture façon systemd EnvironmentFile (les valeurs peuvent contenir des espaces)
+load_env() {
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+    [[ $line == *=* ]] || continue
+    local k=${line%%=*} v=${line#*=}
+    k=${k//[[:space:]]/}
+    [[ $v =~ ^\"(.*)\"$ || $v =~ ^\'(.*)\'$ ]] && v=${BASH_REMATCH[1]}
+    export "$k=$v"
+  done < "$ENV_FILE"
+  # DATABASE_URL_FILE -> DATABASE_URL (nécessaire à la CLI Prisma)
+  if [[ -z ${DATABASE_URL:-} && -n ${DATABASE_URL_FILE:-} ]]; then export DATABASE_URL="$(<"$DATABASE_URL_FILE")"; fi
+  export NODE_ENV=production CHECKPOINT_DISABLE=1 PRISMA_HIDE_UPDATE_MESSAGE=1
+  export PRISMA_SCHEMA_ENGINE_BINARY="$APP/node_modules/@prisma/engines/schema-engine"
+}
+as_kanzen() { (cd "$APP" && runuser -u kanzen --preserve-environment -- "$@"); }
+
+cmd=${1:-help}; shift || true
+case $cmd in
+  version)
+    echo "KanZen $(cat "$APP/VERSION" 2>/dev/null || echo '?') - node $("$NODE" -v)" ;;
+  migrate)
+    load_env; as_kanzen "$NODE" "$PRISMA" migrate deploy ;;
+  migrate-status)
+    load_env; as_kanzen "$NODE" "$PRISMA" migrate status ;;
+  create-admin)
+    [[ $# -ge 1 ]] || die "usage : kanzenctl create-admin <identifiant> [\"Nom affiché\"]"
+    load_env; as_kanzen "$NODE" "$APP/scripts/create-admin.js" "$@" ;;
+  check)
+    load_env; as_kanzen "$NODE" "$APP/scripts/check.js" "$@" ;;
+  backup)
+    load_env; export BACKUP_DIR=${BACKUP_DIR:-/var/backups/kanzen}; runuser -u kanzen --preserve-environment -- "$APP/scripts/backup.sh" ;;
+  restore)
+    [[ $# -eq 1 ]] || die "usage : kanzenctl restore <archive>"
+    systemctl is-active --quiet kanzen && die "arrêter le service d'abord : systemctl stop kanzen"
+    load_env; runuser -u kanzen --preserve-environment -- "$APP/scripts/restore.sh" "$1" ;;
+  *)
+    cat <<USAGE
+Usage : kanzenctl <commande>
+  version                 version installée
+  check [identifiant]     contrôle configuration, base, LDAP (et recherche d'un utilisateur AD)
+  migrate                 applique les migrations de schéma
+  migrate-status          état des migrations
+  create-admin <id>       crée/réinitialise un administrateur local de secours (mot de passe sur stdin)
+  backup                  sauvegarde immédiate (base + pièces jointes) dans /var/backups/kanzen
+  restore <archive>       restauration (service arrêté)
+USAGE
+    ;;
+esac

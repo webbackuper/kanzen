@@ -26,6 +26,10 @@ describe('configuration', () => {
     expect(() => loadConfig({ ...base, auth: { localEnabled: true, ldapEnabled: true }, ldap: { urls: ['ldap://dc1'], startTls: false, bindDn: 'a', bindPassword: 'b', baseDn: 'c', groupUsers: 'd', userFilter: '(x={{username}})' } }))
       .toThrow(/LDAPS/);
   });
+  it('ignore les secrets LDAP quand l\'AD est désactivé', () => {
+    process.env.LDAP_BIND_PASSWORD_FILE = '/inexistant/ldap_bind_password';
+    try { expect(loadConfig(base).auth.ldapEnabled).toBe(false); } finally { delete process.env.LDAP_BIND_PASSWORD_FILE; }
+  });
   it('exige au moins une source d\'authentification', () => {
     expect(() => loadConfig({ ...base, auth: { localEnabled: false, ldapEnabled: false } })).toThrow(/source/);
   });

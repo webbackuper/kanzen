@@ -4,7 +4,11 @@ import fs from 'node:fs';
 
 function read(name, fallback) {
   const file = process.env[`${name}_FILE`];
-  if (file) return fs.readFileSync(file, 'utf8').trim();
+  if (file) {
+    try { return fs.readFileSync(file, 'utf8').trim(); } catch (err) {
+      throw Object.assign(new Error(`${name}_FILE illisible (${file}) : ${err.code ?? err.message}`), { code: 'KZ_CONFIG' });
+    }
+  }
   const v = process.env[name];
   return v === undefined || v === '' ? fallback : v;
 }
@@ -27,6 +31,7 @@ const list = (name, fallback = []) => {
 
 export function loadConfig(overrides = {}) {
   const env = read('NODE_ENV', 'production');
+  const ldapEnabled = bool('AUTH_LDAP_ENABLED', false);
   const isProd = env === 'production';
   const cfg = {
     env,
@@ -63,9 +68,10 @@ export function loadConfig(overrides = {}) {
     },
     auth: {
       localEnabled: bool('AUTH_LOCAL_ENABLED', true),
-      ldapEnabled: bool('AUTH_LDAP_ENABLED', false),
+      ldapEnabled,
     },
-    ldap: {
+    // Paramètres (et secrets) LDAP lus uniquement si l'AD est activé
+    ldap: !ldapEnabled ? { urls: [], userFilter: '{{username}}' } : {
       urls: list('LDAP_URL'), // ldaps://dc1.corp.local:636,ldaps://dc2.corp.local:636
       bindDn: read('LDAP_BIND_DN'),
       bindPassword: read('LDAP_BIND_PASSWORD'),

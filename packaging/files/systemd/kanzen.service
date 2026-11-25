@@ -1,0 +1,55 @@
+[Unit]
+Description=KanZen - Kanban et gestion de projet
+Documentation=file:///opt/kanzen/app/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kanzen
+Group=kanzen
+EnvironmentFile=/etc/kanzen/kanzen.env
+Environment=NODE_ENV=production CHECKPOINT_DISABLE=1 PRISMA_HIDE_UPDATE_MESSAGE=1
+Environment=PRISMA_SCHEMA_ENGINE_BINARY=/opt/kanzen/app/node_modules/@prisma/engines/schema-engine
+WorkingDirectory=/opt/kanzen/app
+# Migrations de schéma appliquées avant chaque démarrage (idempotent)
+ExecStartPre=/opt/kanzen/node/bin/node /opt/kanzen/app/node_modules/prisma/build/index.js migrate deploy
+ExecStart=/opt/kanzen/node/bin/node /opt/kanzen/app/src/server/index.js
+Restart=on-failure
+RestartSec=5
+# Code 78 = configuration invalide : inutile de redémarrer en boucle
+RestartPreventExitStatus=78
+TimeoutStartSec=120
+
+# --- Durcissement ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# Node (JIT V8) a besoin de mémoire exécutable : MemoryDenyWriteExecute reste désactivé
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0027
+ReadWritePaths=/var/lib/kanzen
+ReadOnlyPaths=/etc/kanzen
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

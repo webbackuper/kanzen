@@ -100,5 +100,29 @@ export function createLdapAuthenticator(ldapCfg, log) {
     }
   }
 
-  return { authenticate };
+  /** Diagnostic (kanzenctl check) : bind de service, recherche et groupes, sans mot de passe utilisateur. */
+  async function diagnose(username) {
+    return withClient(async (client) => {
+      await client.bind(ldapCfg.bindDn, ldapCfg.bindPassword);
+      const out = { serviceBind: 'ok' };
+      for (const [k, dn] of [['groupUsers', ldapCfg.groupUsers], ['groupAdmins', ldapCfg.groupAdmins]]) {
+        if (!dn) continue;
+        const r = await client.search(dn, { scope: 'base', filter: '(objectClass=group)', attributes: ['dn'] }).catch(() => ({ searchEntries: [] }));
+        out[k] = r.searchEntries.length === 1 ? 'trouvé' : 'INTROUVABLE';
+      }
+      if (username) {
+        const filter = ldapCfg.userFilter.replaceAll('{{username}}', escapeFilter(username));
+        const { searchEntries } = await client.search(ldapCfg.baseDn, { scope: 'sub', filter, sizeLimit: 2, attributes: ['dn'] });
+        out.user = searchEntries.length === 1 ? searchEntries[0].dn : `${searchEntries.length} résultat(s)`;
+        if (searchEntries.length === 1) {
+          const inGroup = async (g) => g && (await client.search(searchEntries[0].dn, { scope: 'base', filter: `(memberOf:${IN_CHAIN}:=${escapeFilter(g)})`, attributes: ['dn'] })).searchEntries.length === 1;
+          out.memberOfUsers = await inGroup(ldapCfg.groupUsers);
+          out.memberOfAdmins = await inGroup(ldapCfg.groupAdmins);
+        }
+      }
+      return out;
+    });
+  }
+
+  return { authenticate, diagnose };
 }
