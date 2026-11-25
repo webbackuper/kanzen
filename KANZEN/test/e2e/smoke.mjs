@@ -80,10 +80,17 @@ try {
   await page.getByText('Répartition par colonne').waitFor();
 
   // Wiki : lecture, création d'une page avec mise en forme, recherche plein texte, historique
+  // Trois accès : barre principale (redirection directe, un seul espace), carte d'espace, en-tête d'espace
+  const wikiHeading = page.getByRole('heading', { name: /Wiki · Équipe Infra/ });
+  await page.getByRole('navigation', { name: 'Navigation principale' }).getByRole('link', { name: 'Wiki', exact: true }).click();
+  await wikiHeading.waitFor();
+  await page.goto(`${BASE}/`);
+  await page.getByRole('link', { name: "Wiki de l'espace Équipe Infra" }).click();
+  await wikiHeading.waitFor();
   await page.goto(`${BASE}/`);
   await page.getByText('Équipe Infra').click();
-  await page.getByRole('link', { name: 'Wiki', exact: true }).click();
-  await page.getByRole('heading', { name: /Wiki · Équipe Infra/ }).waitFor();
+  await page.getByRole('main').getByRole('link', { name: 'Wiki', exact: true }).click();
+  await wikiHeading.waitFor();
   await page.getByRole('navigation', { name: 'Pages du wiki' }).getByRole('link', { name: "Accueil de l'équipe Infra" }).click();
   await page.getByRole('link', { name: 'Procédure de sauvegarde' }).last().click();
   await page.getByText('Test de restauration trimestriel', { exact: true }).waitFor();

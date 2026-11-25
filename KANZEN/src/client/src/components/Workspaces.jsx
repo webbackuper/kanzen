@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Plus, Trash2, Users, LayoutGrid, BookOpen } from 'lucide-react';
 import { api } from '../api';
 import { ErrorBox, Loading, Modal, useApi, btnPrimary, btnGhost, btnDanger, input, card, ROLE_LABEL } from '../ui';
@@ -30,14 +30,23 @@ export function Workspaces() {
       {data.workspaces.length === 0 && <p className="text-gray-500">Aucun espace. Créez-en un, ou demandez à un propriétaire de vous ajouter.</p>}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {data.workspaces.map((w) => (
-          <Link key={w.id} to={`/w/${w.id}`} className={`${card} p-5 hover:shadow-md transition-shadow`}>
-            <h2 className="font-semibold text-gray-900 dark:text-white">{w.name}</h2>
+          <div key={w.id} className={`${card} relative p-5 hover:shadow-md transition-shadow`}>
+            {/* Lien « étiré » sur toute la carte ; le lien Wiki passe au-dessus (pas de liens imbriqués) */}
+            <h2 className="font-semibold text-gray-900 dark:text-white">
+              <Link to={`/w/${w.id}`} className="after:absolute after:inset-0 after:rounded-xl focus:outline-none focus-visible:after:ring-2 focus-visible:after:ring-indigo-500">{w.name}</Link>
+            </h2>
             <p className="text-sm text-gray-500 mt-1 flex gap-4">
               <span className="flex items-center gap-1"><LayoutGrid size={14} /> {w.boards} tableau(x)</span>
               <span className="flex items-center gap-1"><Users size={14} /> {w.members}</span>
             </p>
-            <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-2">{ROLE_LABEL[w.myRole]}</p>
-          </Link>
+            <div className="mt-2 flex items-center justify-between">
+              <p className="text-xs text-indigo-600 dark:text-indigo-400">{ROLE_LABEL[w.myRole]}</p>
+              <Link to={`/w/${w.id}/wiki`} aria-label={`Wiki de l'espace ${w.name}`}
+                className="relative z-10 flex items-center gap-1 px-2 py-1 -my-1 rounded-md text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/40">
+                <BookOpen size={14} /> Wiki
+              </Link>
+            </div>
+          </div>
         ))}
       </div>
       {creating && (
@@ -162,6 +171,32 @@ export function WorkspacePage({ user }) {
           {isOwner && <MemberAdd wsId={id} onAdded={reload} />}
         </Modal>
       )}
+    </div>
+  );
+}
+
+/** Entrée « Wiki » de la barre principale : un wiki par espace ; redirection directe s'il n'y en a qu'un. */
+export function WikiIndex() {
+  const { data, error } = useApi(() => api.get('/workspaces'), []);
+  if (error) return <div className="p-6"><ErrorBox error={error} /></div>;
+  if (!data) return <Loading />;
+  if (data.workspaces.length === 1) return <Navigate to={`/w/${data.workspaces[0].id}/wiki`} replace />;
+  return (
+    <div className="p-6 max-w-5xl mx-auto">
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Wiki</h1>
+      <p className="text-sm text-gray-500 mb-6">Chaque espace de travail a son propre wiki, avec les mêmes droits que ses tableaux.</p>
+      {data.workspaces.length === 0 && <p className="text-gray-500">Aucun espace. Créez-en un depuis « Espaces », ou demandez à un propriétaire de vous ajouter.</p>}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {data.workspaces.map((w) => (
+          <Link key={w.id} to={`/w/${w.id}/wiki`} className={`${card} p-5 hover:shadow-md transition-shadow flex items-start gap-3`}>
+            <BookOpen size={20} className="text-indigo-500 mt-0.5 shrink-0" />
+            <span>
+              <span className="block font-semibold text-gray-900 dark:text-white">{w.name}</span>
+              <span className="block text-xs text-indigo-600 dark:text-indigo-400 mt-1">{ROLE_LABEL[w.myRole]}</span>
+            </span>
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }

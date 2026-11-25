@@ -1,9 +1,9 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Calendar, LogOut, Moon, Sun, Users, ScrollText, UserCog, Search } from 'lucide-react';
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { LayoutDashboard, Calendar, LogOut, Moon, Sun, Users, ScrollText, UserCog, Search, BookOpen } from 'lucide-react';
 import { api, setUnauthorizedHandler } from './api';
 import { Login, ChangePassword } from './components/Login';
-import { Workspaces, WorkspacePage } from './components/Workspaces';
+import { Workspaces, WorkspacePage, WikiIndex } from './components/Workspaces';
 import { KanbanBoard } from './components/KanbanBoard';
 import { BoardStats } from './components/BoardStats';
 import { CalendarView } from './components/CalendarView';
@@ -32,21 +32,24 @@ function GlobalSearch() {
 }
 
 function NavBar({ user, onLogout, toggleTheme, isDark }) {
+  // Le wiki d'un espace (/w/:id/wiki…), ses pages (/wiki/:id) et la recherche relèvent de l'onglet Wiki
+  const inWiki = /^\/(wiki|search)(\/|$)|^\/w\/[^/]+\/wiki(\/|$)/.test(useLocation().pathname);
   const link = ({ isActive }) => `flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${isActive
     ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-400'
     : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100'}`;
   return (
-    <nav className="h-14 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between px-4 shrink-0">
+    <nav aria-label="Navigation principale" className="h-14 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between px-4 shrink-0">
       <NavLink to="/" className="flex items-center gap-2">
         <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold">Z</div>
         <span className="text-lg font-bold text-gray-800 dark:text-white hidden sm:inline">KanZen</span>
       </NavLink>
       <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-lg gap-1">
-        <NavLink to="/" end className={link}><LayoutDashboard size={16} /> <span className="hidden md:inline">Espaces</span></NavLink>
-        <NavLink to="/calendar" className={link}><Calendar size={16} /> <span className="hidden md:inline">Agenda</span></NavLink>
+        <NavLink to="/" end className={link} title="Espaces"><LayoutDashboard size={16} /> <span className="hidden md:inline">Espaces</span></NavLink>
+        <NavLink to="/wiki" className={() => link({ isActive: inWiki })} title="Wiki"><BookOpen size={16} /> <span className="hidden md:inline">Wiki</span></NavLink>
+        <NavLink to="/calendar" className={link} title="Agenda"><Calendar size={16} /> <span className="hidden md:inline">Agenda</span></NavLink>
         {user.role === 'ADMIN' && <>
-          <NavLink to="/admin/users" className={link}><Users size={16} /> <span className="hidden md:inline">Comptes</span></NavLink>
-          <NavLink to="/admin/audit" className={link}><ScrollText size={16} /> <span className="hidden md:inline">Audit</span></NavLink>
+          <NavLink to="/admin/users" className={link} title="Comptes"><Users size={16} /> <span className="hidden md:inline">Comptes</span></NavLink>
+          <NavLink to="/admin/audit" className={link} title="Audit"><ScrollText size={16} /> <span className="hidden md:inline">Audit</span></NavLink>
         </>}
       </div>
       <div className="flex items-center gap-3">
@@ -118,6 +121,7 @@ export default function App() {
             <Route path="/w/:id" element={<WorkspacePage user={user} />} />
             <Route path="/b/:id" element={<KanbanBoard user={user} />} />
             <Route path="/b/:id/stats" element={<BoardStats />} />
+            <Route path="/wiki" element={<WikiIndex />} />
             <Route path="/w/:id/wiki" element={<WikiHome />} />
             <Route path="/w/:id/wiki/trash" element={<WikiTrash />} />
             <Route path="/wiki/:id" element={<WikiPage />} />
