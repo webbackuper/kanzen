@@ -37,7 +37,7 @@ jobs:
           cache-dependency-path: KANZEN/package-lock.json
       - run: npm ci
       - run: npx prisma validate
-      - run: npx prisma generate
+      - run: npm run db:generate   # génère puis transpile le client en JavaScript
       - run: npx prisma migrate deploy
       - run: npm run lint
       - run: npm test
