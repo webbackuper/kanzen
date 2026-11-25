@@ -11,13 +11,13 @@
     "start": "node src/server/index.js",
     "lint": "eslint .",
     "test": "vitest run",
-    "db:generate": "prisma generate",
+    "db:generate": "prisma generate && node scripts/compile-prisma-client.js",
     "db:migrate": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.js",
     "sbom": "npm sbom --sbom-format cyclonedx --omit=dev > sbom.cdx.json",
     "test:e2e": "node test/e2e/smoke.mjs",
     "admin:create": "node scripts/create-admin.js",
-    "postinstall": "prisma generate"
+    "postinstall": "npm run db:generate"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -57,6 +57,7 @@
     "playwright": "^1.63.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
+    "typescript": "^5.9.3",
     "vite": "^8.3.8",
     "vitest": "^5.1.1"
   },

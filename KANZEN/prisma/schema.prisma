@@ -2,9 +2,12 @@
 // Client Prisma 7 sans moteur binaire (driver adapter pg) : adapté au mode offline.
 
 generator client {
-  provider = "prisma-client"
-  output   = "../src/server/generated/prisma"
-  moduleFormat = "esm"
+  provider            = "prisma-client"
+  output              = "../src/server/generated/prisma"
+  moduleFormat        = "esm"
+  // Imports en .js : le TypeScript généré est ensuite transpilé en JavaScript
+  // (scripts/compile-prisma-client.js) pour tourner sur tout Node >= 22, y compris ceux des distributions.
+  importFileExtension = "js"
 }
 
 datasource db {

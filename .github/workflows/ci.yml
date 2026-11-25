@@ -47,6 +47,9 @@ jobs:
           npx playwright install --with-deps chromium
           NODE_ENV=development node prisma/seed.js
           npm run test:e2e
+        # Garantit le fonctionnement sur les Node des distributions (sans « type stripping » TypeScript)
+        env:
+          NODE_OPTIONS: --no-experimental-strip-types
 
   security:
     runs-on: ubuntu-latest
