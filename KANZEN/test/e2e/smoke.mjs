@@ -23,7 +23,11 @@ try {
   // Diagnostic en cas d'échec : réponses HTTP en erreur
   const httpErrors = [];
   page.on('response', async (r) => { if (r.status() >= 400) httpErrors.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname} ${(await r.text().catch(() => '')).slice(0, 200)}`); });
+  const writes = [];
+  page.on('request', (r) => { if (r.method() !== 'GET' && r.url().includes('/api/tasks/')) writes.push(`${r.method()} ${new URL(r.url()).pathname} ${r.postData() ?? ''}`); });
   globalThis.dumpState = async () => {
+    console.error('Écritures tâches :', writes);
+    console.error('Boutons pressés :', await page.locator('[role=group][aria-label="Assignés"] button').evaluateAll((bs) => bs.map((b) => `${b.textContent}=${b.getAttribute('aria-pressed')}`)).catch(() => '?'));
     console.error('Réponses en erreur :', httpErrors);
     console.error('URL :', page.url());
     console.error('Dialogue :', await page.locator('[role=dialog]').innerText({ timeout: 1000 }).catch(() => '(aucun)'));
