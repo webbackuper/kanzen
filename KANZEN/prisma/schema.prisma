@@ -63,6 +63,10 @@ model User {
   wikiUpdated   WikiPage[]        @relation("WikiUpdatedBy")
   wikiRevisions WikiRevision[]
   wikiFiles     WikiFile[]
+  wikiAccess    WikiPageMember[]
+  wikiFavorites WikiFavorite[]
+  wikiViews     WikiView[]
+  wikiTaskLinks WikiTaskLink[]
 }
 
 /// Session côté serveur : le cookie porte un jeton opaque, seul son SHA-256 est stocké.
@@ -89,6 +93,9 @@ model Workspace {
   members   WorkspaceMember[]
   boards    Board[]
   wikiPages WikiPage[]
+  /// Page affichée en tête de l'accueil du wiki (facultative)
+  wikiHomePageId String?   @unique @db.Uuid
+  wikiHomePage   WikiPage? @relation("WikiHome", fields: [wikiHomePageId], references: [id], onDelete: SetNull)
 }
 
 model WorkspaceMember {
@@ -147,6 +154,7 @@ model Task {
   comments    Comment[]
   attachments Attachment[]
   events      TaskEvent[]
+  wikiLinks   WikiTaskLink[]
 
   @@index([columnId])
   @@index([dueDate])
@@ -270,8 +278,17 @@ model WikiPage {
   /// à tort un « DROP DEFAULT » sur cette colonne : retirer cette ligne du SQL généré.
   search      Unsupported("tsvector")?
 
+  /// Accès restreint : la page et sa descendance ne sont visibles que des membres listés
+  /// (et des propriétaires de l'espace). Les restrictions des ancêtres se cumulent.
+  restricted Boolean @default(false)
+
   revisions WikiRevision[]
   files     WikiFile[]
+  access    WikiPageMember[]
+  favorites WikiFavorite[]
+  views     WikiView[]
+  taskLinks WikiTaskLink[]
+  homeOf    Workspace?     @relation("WikiHome")
 
   @@index([workspaceId, parentId])
   @@index([parentId])
@@ -309,4 +326,55 @@ model WikiFile {
   uploadedAt   DateTime @default(now())
 
   @@index([pageId])
+}
+
+/// Utilisateur autorisé sur une page à accès restreint
+model WikiPageMember {
+  pageId    String   @db.Uuid
+  page      WikiPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([pageId, userId])
+  @@index([userId])
+}
+
+/// Page mise en favori par un utilisateur
+model WikiFavorite {
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pageId    String   @db.Uuid
+  page      WikiPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, pageId])
+  @@index([pageId])
+}
+
+/// Dernière consultation d'une page par un utilisateur (pages récentes)
+model WikiView {
+  userId   String   @db.Uuid
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pageId   String   @db.Uuid
+  page     WikiPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  viewedAt DateTime @default(now())
+
+  @@id([userId, pageId])
+  @@index([userId, viewedAt])
+  @@index([pageId])
+}
+
+/// Lien entre une page du wiki et une tâche du Kanban (même espace)
+model WikiTaskLink {
+  pageId      String   @db.Uuid
+  page        WikiPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  taskId      String   @db.Uuid
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdById String?  @db.Uuid
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@id([pageId, taskId])
+  @@index([taskId])
 }

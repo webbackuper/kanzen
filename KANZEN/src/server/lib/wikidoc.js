@@ -11,6 +11,7 @@ const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 /** Seules les images stockées dans KanZen sont autorisées (pas de requête vers l'extérieur ni de pistage). */
 export const WIKI_FILE_SRC = new RegExp(`^/api/wiki/files/(${UUID})$`);
 
+export const CALLOUTS = ['info', 'tip', 'warning', 'danger'];
 const str = (max) => (v) => (typeof v === 'string' ? v.slice(0, max) : undefined);
 const int = (min, max) => (v) => (Number.isInteger(v) && v >= min && v <= max ? v : undefined);
 const bool = (v) => (typeof v === 'boolean' ? v : undefined);
@@ -42,6 +43,17 @@ const NODES = {
   horizontalRule: {},
   hardBreak: {},
   image: { src: (v) => (typeof v === 'string' && WIKI_FILE_SRC.test(v) ? v : undefined), alt: str(300), title: str(300) },
+  /** Fichier joint (PDF, Office…) : carte de téléchargement, toujours un fichier stocké dans KanZen. */
+  fileAttachment: {
+    src: (v) => (typeof v === 'string' && WIKI_FILE_SRC.test(v) ? v : undefined),
+    filename: str(200), size: int(0, 10 * 1024 ** 3), mimetype: (v) => (typeof v === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(v) ? v.slice(0, 100) : undefined),
+  },
+  /** Encadré : information, conseil, attention, danger. */
+  callout: { variant: (v) => (CALLOUTS.includes(v) ? v : undefined) },
+  /** Bloc dépliable : résumé toujours visible, contenu replié par défaut. */
+  details: { open: bool },
+  detailsSummary: {},
+  detailsContent: {},
   table: {},
   tableRow: {},
   tableHeader: { colspan: int(1, 50), rowspan: int(1, 50), colwidth: (v) => (Array.isArray(v) && v.every((n) => Number.isInteger(n) && n > 0 && n < 5000) ? v.slice(0, 50) : undefined) },
@@ -95,7 +107,7 @@ export function sanitizeDoc(input) {
       return out;
     }
     const attrs = cleanAttrs(spec, n.attrs);
-    if (n.type === 'image' && !attrs?.src) return null; // image externe ou invalide : retirée
+    if ((n.type === 'image' || n.type === 'fileAttachment') && !attrs?.src) return null; // fichier externe ou invalide : retiré
     if (attrs) out.attrs = attrs;
     if (n.content !== undefined) {
       if (!Array.isArray(n.content)) throw badRequest('Document invalide');
@@ -112,7 +124,7 @@ export function sanitizeDoc(input) {
 
 export const emptyDoc = () => ({ type: 'doc', content: [{ type: 'paragraph' }] });
 
-const BLOCKS = new Set(['paragraph', 'heading', 'listItem', 'taskItem', 'blockquote', 'codeBlock', 'tableRow', 'horizontalRule']);
+const BLOCKS = new Set(['paragraph', 'heading', 'listItem', 'taskItem', 'blockquote', 'codeBlock', 'tableRow', 'horizontalRule', 'fileAttachment', 'callout', 'detailsSummary']);
 
 /** Texte brut du document, pour la recherche plein texte et les extraits. */
 export function docText(doc) {
@@ -121,6 +133,7 @@ export function docText(doc) {
     if (n.type === 'text') parts.push(n.text);
     else if (n.type === 'hardBreak') parts.push('\n');
     else if (n.type === 'image' && n.attrs?.alt) parts.push(n.attrs.alt);
+    else if (n.type === 'fileAttachment' && n.attrs?.filename) parts.push(n.attrs.filename);
     for (const c of n.content ?? []) walk(c);
     if (BLOCKS.has(n.type) || n.type === 'tableCell' || n.type === 'tableHeader') parts.push(n.type === 'tableCell' || n.type === 'tableHeader' ? ' ' : '\n');
   };
@@ -133,7 +146,7 @@ export function docText(doc) {
 export function docFileIds(doc) {
   const ids = new Set();
   const walk = (n) => {
-    if (n.type === 'image') { const m = WIKI_FILE_SRC.exec(n.attrs?.src ?? ''); if (m) ids.add(m[1]); }
+    if (n.type === 'image' || n.type === 'fileAttachment') { const m = WIKI_FILE_SRC.exec(n.attrs?.src ?? ''); if (m) ids.add(m[1]); }
     for (const c of n.content ?? []) walk(c);
   };
   walk(doc);
@@ -144,10 +157,13 @@ export function docFileIds(doc) {
 
 const escapeMd = (s) => s.replace(/([\\`*_[\]#<>|])/g, '\\$1');
 
+// Adresse des fichiers dans l'export (chemin relatif dans une archive, par exemple)
+let fileUrl = (src) => src;
+
 function inline(nodes = []) {
   return nodes.map((n) => {
     if (n.type === 'hardBreak') return '  \n';
-    if (n.type === 'image') return `![${escapeMd(n.attrs?.alt ?? '')}](${n.attrs.src})`;
+    if (n.type === 'image') return `![${escapeMd(n.attrs?.alt ?? '')}](${fileUrl(n.attrs.src)})`;
     if (n.type !== 'text') return inline(n.content);
     const marks = new Set((n.marks ?? []).map((m) => m.type));
     let t = marks.has('code') ? `\`${n.text.replace(/`/g, 'ˋ')}\`` : escapeMd(n.text);
@@ -169,6 +185,17 @@ function block(n, indent = '') {
     case 'codeBlock': return `\`\`\`${n.attrs?.language ?? ''}\n${c.map((x) => x.text).join('')}\n\`\`\``;
     case 'horizontalRule': return '---';
     case 'image': return inline([n]);
+    case 'fileAttachment': return `${indent}📎 [${escapeMd(n.attrs?.filename ?? 'fichier')}](${fileUrl(n.attrs.src)})`;
+    case 'callout': {
+      const label = { info: 'Information', tip: 'Conseil', warning: 'Attention', danger: 'Danger' }[n.attrs?.variant ?? 'info'] ?? 'Information';
+      const body = c.map((x) => block(x)).join('\n\n');
+      return [`**${label}**`, ...body.split('\n')].map((l) => `> ${l}`).join('\n');
+    }
+    case 'details': {
+      const summary = c.find((x) => x.type === 'detailsSummary');
+      const content = c.find((x) => x.type === 'detailsContent');
+      return `<details>\n<summary>${inline(summary?.content).replace(/</g, '&lt;')}</summary>\n\n${(content?.content ?? []).map((x) => block(x)).join('\n\n')}\n\n</details>`;
+    }
     case 'bulletList':
     case 'orderedList':
     case 'taskList':
@@ -190,6 +217,12 @@ function block(n, indent = '') {
   }
 }
 
-export function docToMarkdown(title, doc) {
-  return `# ${title}\n\n${(doc.content ?? []).map((n) => block(n)).join('\n\n').trim()}\n`;
+/** Export Markdown. `options.fileUrl(src)` réécrit l'adresse des images et fichiers joints. */
+export function docToMarkdown(title, doc, options = {}) {
+  fileUrl = options.fileUrl ?? ((src) => src);
+  try {
+    return `# ${title}\n\n${(doc.content ?? []).map((n) => block(n)).join('\n\n').trim()}\n`;
+  } finally {
+    fileUrl = (src) => src;
+  }
 }
