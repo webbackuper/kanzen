@@ -3,11 +3,11 @@ import globals from 'globals';
 import react from 'eslint-plugin-react';
 
 export default [
-  { ignores: ['dist/', 'public/', 'node_modules/', 'uploads/'] },
+  { ignores: ['dist/', 'public/', 'node_modules/', 'uploads/', 'src/server/generated/'] },
   js.configs.recommended,
-  { rules: { 'no-unused-vars': ['error', { argsIgnorePattern: '^_' }] } },
+  { rules: { 'no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }] } },
   {
-    files: ['src/server/**/*.js', 'prisma/**/*.js', 'test/**/*.js', '*.config.js'],
+    files: ['src/server/**/*.js', 'prisma/**/*.js', 'test/**/*.js', 'scripts/**/*.js', '*.config.js'],
     languageOptions: { globals: globals.node },
   },
   {

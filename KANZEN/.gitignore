@@ -32,3 +32,6 @@ docker-logs/
 # Build servi par le backend & SBOM générés
 public/
 sbom.cdx.json
+
+# Client Prisma généré
+src/server/generated/

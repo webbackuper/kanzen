@@ -1,83 +1,40 @@
-import { PrismaClient } from '@prisma/client';
-import bcrypt from 'bcryptjs';
+// Jeu de données de DÉVELOPPEMENT uniquement : purge toutes les tables.
+import { createPrisma } from '../src/server/db.js';
+import { hashPassword } from '../src/server/lib/passwords.js';
 
-const prisma = new PrismaClient();
-
-async function main() {
-  // Garde-fou : ce seed PURGE toutes les tables. Interdit hors développement.
-  if (process.env.NODE_ENV === 'production' && process.env.KANZEN_ALLOW_SEED !== 'yes') {
-    console.error('Seed refusé en production (il efface toutes les données). Définir KANZEN_ALLOW_SEED=yes pour forcer.');
-    process.exit(1);
-  }
-  console.log('🌱 Démarrage du Seed Multi-Tenant...');
-
-  // Nettoyage (Ordre important pour Foreign Keys)
-  await prisma.attachment.deleteMany();
-  await prisma.rule.deleteMany();
-  await prisma.task.deleteMany();
-  await prisma.column.deleteMany();
-  await prisma.board.deleteMany();
-  await prisma.group.deleteMany();
-  await prisma.workspaceMember.deleteMany();
-  await prisma.workspace.deleteMany();
-  await prisma.user.deleteMany();
-
-  // 1. Utilisateurs
-  const password = await bcrypt.hash('password123', 10);
-  
-  const admin = await prisma.user.create({
-    data: { 
-      email: 'admin@KanZen.io', name: 'Admin System', password, role: 'ADMIN'
-    }
-  });
-
-  const manager = await prisma.user.create({
-    data: { email: 'manager@KanZen.io', name: 'Chef de Projet', password }
-  });
-
-  // 2. Workspace & Membres
-  const workspace = await prisma.workspace.create({
-    data: { name: 'KanZen Corp', slug: 'KanZen-corp' }
-  });
-
-  await prisma.workspaceMember.create({
-    data: { userId: admin.id, workspaceId: workspace.id, role: 'ADMIN' }
-  });
-
-  await prisma.workspaceMember.create({
-    data: { userId: manager.id, workspaceId: workspace.id, role: 'USER' }
-  });
-
-  // 3. Groupes (Validation)
-  const validationGroup = await prisma.group.create({
-    data: {
-      name: 'Comité de Validation',
-      workspaceId: workspace.id,
-      memberIds: JSON.stringify([admin.id, manager.id]) // Admin et Manager valident
-    }
-  });
-
-  // 4. Board & Tâches
-  const board = await prisma.board.create({
-    data: { title: 'Q1 Roadmap', workspaceId: workspace.id }
-  });
-
-  const colTodo = await prisma.column.create({ data: { title: 'To Do', order: 0, boardId: board.id } });
-  await prisma.column.create({ data: { title: 'Review', order: 1, boardId: board.id } });
-
-  // Tâche nécessitant validation
-  await prisma.task.create({
-    data: {
-      content: 'Valider le Budget 2026',
-      columnId: colTodo.id,
-      color: 'red',
-      validatorGroupId: validationGroup.id // Lié au groupe créé plus haut
-    }
-  });
-
-  console.log('✅ Base de données initialisée avec structure Multi-Workspaces.');
+if (process.env.NODE_ENV === 'production' && process.env.KANZEN_ALLOW_SEED !== 'yes') {
+  console.error('Seed refusé en production (il efface toutes les données). Définir KANZEN_ALLOW_SEED=yes pour forcer.');
+  process.exit(1);
 }
 
-main()
-  .catch((e) => { console.error(e); process.exit(1); })
-  .finally(async () => { await prisma.$disconnect(); });
+const prisma = createPrisma(process.env.DATABASE_URL);
+await prisma.$executeRawUnsafe('TRUNCATE "AuditLog", "Session", "Workspace", "User" RESTART IDENTITY CASCADE');
+
+const pwd = await hashPassword('KanZen-Dev-2026!');
+const admin = await prisma.user.create({ data: { username: 'admin', displayName: 'Admin (dev)', role: 'ADMIN', authSource: 'LOCAL', passwordHash: pwd } });
+const alice = await prisma.user.create({ data: { username: 'alice', displayName: 'Alice Martin', authSource: 'LOCAL', passwordHash: pwd } });
+const bob = await prisma.user.create({ data: { username: 'bob', displayName: 'Bob Durand', authSource: 'LOCAL', passwordHash: pwd } });
+
+const ws = await prisma.workspace.create({
+  data: {
+    name: 'Équipe Infra', slug: 'equipe-infra',
+    members: { create: [{ userId: admin.id, role: 'OWNER' }, { userId: alice.id, role: 'EDITOR' }, { userId: bob.id, role: 'VIEWER' }] },
+  },
+});
+const board = await prisma.board.create({ data: { title: 'Migration datacenter', workspaceId: ws.id } });
+const cols = [];
+for (const [i, title] of ['À faire', 'En cours', 'En revue', 'Terminé'].entries()) {
+  cols.push(await prisma.column.create({ data: { title, position: (i + 1) * 1000, boardId: board.id } }));
+}
+const tasks = [
+  ['Inventaire des VM', 0, 'blue'], ['Plan d\'adressage IP', 0, 'white'], ['Renouveler certificats PKI', 1, 'red'],
+  ['Configurer les sauvegardes', 2, 'yellow'], ['Durcissement CIS des hôtes', 3, 'green'],
+];
+for (const [j, [title, c, color]] of tasks.entries()) {
+  const t = await prisma.task.create({
+    data: { title, color, columnId: cols[c].id, position: (j + 1) * 1000, assigneeId: j % 2 ? alice.id : null, createdById: admin.id, dueDate: new Date(Date.now() + (j + 2) * 86400_000) },
+  });
+  await prisma.taskEvent.create({ data: { taskId: t.id, toColumnId: t.columnId, actorId: admin.id } });
+}
+console.log('Seed de développement OK. Comptes admin / alice / bob, mot de passe : KanZen-Dev-2026!');
+await prisma.$disconnect();

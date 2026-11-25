@@ -1,139 +1,218 @@
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
+// KanZen v3 : modèle de données (PostgreSQL)
+// Client Prisma 7 sans moteur binaire (driver adapter pg) : adapté au mode offline.
 
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../src/server/generated/prisma"
+  moduleFormat = "esm"
 }
 
-enum Role {
-  ADMIN
+datasource db {
+  provider = "postgresql"
+}
+
+/// Rôle global dans l'application
+enum GlobalRole {
+  ADMIN // administre l'instance (comptes, espaces, audit)
   USER
-  OBSERVER
+}
+
+/// Rôle dans un espace de travail
+enum WorkspaceRole {
+  OWNER  // gère l'espace et ses membres
+  EDITOR // crée et modifie le contenu
+  VIEWER // lecture seule
+}
+
+/// Origine du compte
+enum AuthSource {
+  LOCAL
+  LDAP
 }
 
 model User {
-  id           String            @id @default(uuid())
-  email        String            @unique
-  password     String
-  name         String
-  role         Role              @default(USER)
-  memberships  WorkspaceMember[]
-  assignedTasks Task[]           @relation("AssignedTo")
+  id           String     @id @default(uuid()) @db.Uuid
+  /// Identifiant de connexion : sAMAccountName pour LDAP, libre pour LOCAL. Toujours en minuscules.
+  username     String     @unique
+  email        String?
+  displayName  String
+  authSource   AuthSource
+  /// Hash argon2id, uniquement pour les comptes LOCAL
+  passwordHash String?
+  /// objectGUID AD (stable même si le compte est renommé)
+  externalId   String?    @unique
+  role         GlobalRole @default(USER)
+  disabled     Boolean    @default(false)
+  mustChangePassword Boolean @default(false)
+  failedLogins Int        @default(0)
+  lockedUntil  DateTime?
+  lastLoginAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  sessions      Session[]
+  memberships   WorkspaceMember[]
+  assignedTasks Task[]     @relation("AssignedTo")
+  createdTasks  Task[]     @relation("CreatedBy")
+  comments      Comment[]
+  attachments   Attachment[]
+}
+
+/// Session côté serveur : le cookie porte un jeton opaque, seul son SHA-256 est stocké.
+model Session {
+  id         String   @id @default(uuid()) @db.Uuid
+  tokenHash  String   @unique
+  userId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  expiresAt  DateTime
+  ip         String?
+  userAgent  String?
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Workspace {
-  id        String            @id @default(uuid())
+  id        String            @id @default(uuid()) @db.Uuid
   name      String
   slug      String            @unique
+  createdAt DateTime          @default(now())
   members   WorkspaceMember[]
   boards    Board[]
-  groups    Group[]
 }
 
 model WorkspaceMember {
-  id          String    @id @default(uuid())
-  userId      String
-  workspaceId String
-  role        Role      @default(USER)
-  user        User      @relation(fields: [userId], references: [id])
-  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  id          String        @id @default(uuid()) @db.Uuid
+  userId      String        @db.Uuid
+  workspaceId String        @db.Uuid
+  role        WorkspaceRole @default(EDITOR)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   @@unique([userId, workspaceId])
 }
 
-model Group {
-  id          String    @id @default(uuid())
-  name        String
-  workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id])
-  memberIds   String    
-}
-
 model Board {
-  id          String    @id @default(uuid())
+  id          String    @id @default(uuid()) @db.Uuid
   title       String
-  workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  workspaceId String    @db.Uuid
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  archived    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
   columns     Column[]
+
+  @@index([workspaceId])
 }
 
 model Column {
-  id      String @id @default(uuid())
-  title   String
-  order   Int
-  boardId String
-  board   Board  @relation(fields: [boardId], references: [id])
-  tasks   Task[]
-  rules   Rule[]
+  id       String  @id @default(uuid()) @db.Uuid
+  title    String
+  position Float
+  boardId  String  @db.Uuid
+  board    Board   @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  /// Limite WIP optionnelle
+  wipLimit Int?
+  tasks    Task[]
+
+  @@index([boardId])
 }
 
 model Task {
-  id               String           @id @default(uuid())
-  content          String
-  color            String           @default("white")
-  columnId         String
-  column           Column           @relation(fields: [columnId], references: [id])
-  
-  // NOUVEAU : Gestion Calendrier & Assignation
-  dueDate          DateTime?
-  assigneeId       String?
-  assignee         User?            @relation("AssignedTo", fields: [assigneeId], references: [id])
-  
-  // Validation
-  validatorGroupId String?
-  
-  // Relations Contenu
-  subtasks         SubTask[]        // NOUVEAU
-  comments         Comment[]
-  attachments      Attachment[]
-  events           TaskEvent[]
-  
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  id          String   @id @default(uuid()) @db.Uuid
+  title       String
+  description String   @default("")
+  color       String   @default("white")
+  /// Position fractionnaire dans la colonne (réordonnancement sans renuméroter)
+  position    Float
+  columnId    String   @db.Uuid
+  column      Column   @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  dueDate     DateTime?
+  assigneeId  String?  @db.Uuid
+  assignee    User?    @relation("AssignedTo", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdById String?  @db.Uuid
+  createdBy   User?    @relation("CreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  subtasks    SubTask[]
+  comments    Comment[]
+  attachments Attachment[]
+  events      TaskEvent[]
+
+  @@index([columnId])
+  @@index([assigneeId])
+  @@index([dueDate])
 }
 
-// NOUVEAU MODEL : Sous-tâches
 model SubTask {
-  id        String   @id @default(uuid())
+  id        String  @id @default(uuid()) @db.Uuid
   content   String
-  completed Boolean  @default(false)
-  taskId    String
-  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  completed Boolean @default(false)
+  position  Float
+  taskId    String  @db.Uuid
+  task      Task    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
 }
 
 model Attachment {
-  id         String   @id @default(uuid())
-  filename   String
-  path       String
-  mimetype   String
-  size       Int
-  taskId     String
-  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  uploadedAt DateTime @default(now())
+  id          String   @id @default(uuid()) @db.Uuid
+  /// Nom d'origine, affiché uniquement (jamais utilisé comme chemin)
+  filename    String
+  /// Nom de stockage généré (UUID), sans lien avec le nom fourni
+  storageName String   @unique
+  mimetype    String
+  size        Int
+  sha256      String
+  taskId      String   @db.Uuid
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedById String? @db.Uuid
+  uploadedBy  User?    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedAt  DateTime @default(now())
+
+  @@index([taskId])
 }
 
 model Comment {
-  id        String   @id @default(uuid())
+  id        String   @id @default(uuid()) @db.Uuid
   content   String
   createdAt DateTime @default(now())
-  taskId    String
+  taskId    String   @db.Uuid
   task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String?  @db.Uuid
+  author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([taskId])
 }
 
+/// Historique des déplacements (alimente les statistiques)
 model TaskEvent {
-  id           String   @id @default(uuid())
-  taskId       String
+  id           String   @id @default(uuid()) @db.Uuid
+  taskId       String   @db.Uuid
   task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  fromColumnId String?
-  toColumnId   String
+  fromColumnId String?  @db.Uuid
+  toColumnId   String   @db.Uuid
+  actorId      String?  @db.Uuid
   timestamp    DateTime @default(now())
+
+  @@index([taskId])
+  @@index([timestamp])
 }
 
-model Rule {
-  id        String @id @default(uuid())
-  triggerId String
-  column    Column @relation(fields: [triggerId], references: [id])
-  action    String 
-  value     String
+/// Journal d'audit sécurité (connexions, administration). Aussi émis en JSON sur stdout (journald / SIEM).
+model AuditLog {
+  id        BigInt   @id @default(autoincrement())
+  timestamp DateTime @default(now())
+  actorId   String?  @db.Uuid
+  actorName String?
+  action    String
+  target    String?
+  outcome   String
+  ip        String?
+  details   Json?
+
+  @@index([timestamp])
+  @@index([action])
 }
