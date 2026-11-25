@@ -19,7 +19,7 @@ overrides:
     depends: [postgresql-client, "libssl3 | libssl3t64", tar, gzip, util-linux, ca-certificates]
     recommends: [postgresql, nginx, gnupg]
   rpm:
-    depends: [postgresql, openssl-libs, tar, gzip, util-linux, ca-certificates, shadow-utils]
+    depends: ["postgresql >= 14", openssl-libs, tar, gzip, util-linux, ca-certificates, shadow-utils]
     recommends: [postgresql-server, nginx, gnupg2]
 
 contents:

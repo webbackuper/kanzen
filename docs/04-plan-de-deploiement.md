@@ -12,6 +12,7 @@ Il s'applique à **RHEL / Rocky / Alma 9+** et à **Debian 12+ / Ubuntu 22.04+**
 
 | Document lié | Contenu |
 |---|---|
+| [`docs/05-deploiement-rhel96.md`](05-deploiement-rhel96.md) | **Procédure spécifique RHEL 9.6** avec miroirs internes des dépôts Red Hat : versions vérifiées, modules AppStream, fiche d'informations à réunir |
 | [`docs/auth-ad.md`](auth-ad.md) | Détail de l'authentification AD et des comptes locaux |
 | [`docs/03-packaging.md`](03-packaging.md) | Contenu des paquets, durcissement systemd, `kanzenctl` |
 | [`KANZEN/.env.example`](../KANZEN/.env.example) | Référence de toutes les variables de configuration |
@@ -137,7 +138,7 @@ KanZen n'a besoin que de paquets standards de la distribution :
 |---|---|---|
 | Client PostgreSQL (sauvegardes) | `postgresql` | `postgresql-client` |
 | Serveur PostgreSQL 14+ | `postgresql-server` (module `postgresql:16`) | `postgresql` (15 sur Debian 12, 16 sur Ubuntu 24.04) |
-| Reverse proxy | `nginx` | `nginx` |
+| Reverse proxy | `nginx` (module `nginx:1.26` recommandé) | `nginx` |
 | Bibliothèques | `openssl-libs`, `ca-certificates`, `util-linux`, `shadow-utils`, `tar`, `gzip` | `libssl3`, `ca-certificates`, `util-linux`, `tar`, `gzip` |
 | Chiffrement des sauvegardes | `gnupg2` | `gnupg` |
 | Diagnostic | `openldap-clients`, `openssl` | `ldap-utils`, `openssl` |
@@ -148,7 +149,7 @@ KanZen n'a besoin que de paquets standards de la distribution :
 
 ```bash
 # [RPM] sur une Rocky/RHEL 9 connectée, identique à la cible
-dnf module enable -y postgresql:16
+dnf module enable -y postgresql:16 nginx:1.26
 mkdir deps && dnf download --resolve --alldeps --destdir deps \
   postgresql-server postgresql nginx gnupg2 openldap-clients
 # [DEB] sur une Debian 12 connectée, identique à la cible
@@ -344,7 +345,7 @@ Toutes les commandes de cette section sont exécutées en **root**, sur `kanzen0
 **[RPM] RHEL / Rocky 9**
 
 ```bash
-dnf module enable -y postgresql:16
+dnf module enable -y postgresql:16 nginx:1.26     # avant toute installation : voir 05-deploiement-rhel96.md
 dnf install -y postgresql-server postgresql
 postgresql-setup --initdb
 systemctl enable --now postgresql
