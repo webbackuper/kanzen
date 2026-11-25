@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { DndContext, closestCorners, useSensor, useSensors, PointerSensor, KeyboardSensor } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { io } from 'socket.io-client';
@@ -14,6 +14,12 @@ export function KanbanBoard() {
   const [board, setBoard] = useState(null);
   const [error, setError] = useState(null);
   const [openTask, setOpenTask] = useState(null);
+  const [params, setParams] = useSearchParams();
+  // Ouverture directe d'une tâche (lien depuis le wiki : /b/:id?task=…)
+  useEffect(() => {
+    const t = params.get('task');
+    if (t && /^[0-9a-f-]{36}$/.test(t)) { setOpenTask(t); setParams({}, { replace: true }); }
+  }, [params]);
   const [newCol, setNewCol] = useState('');
 
   const load = useCallback(() => api.get(`/boards/${id}`).then((r) => setBoard(r.board), setError), [id]);

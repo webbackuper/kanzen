@@ -124,7 +124,7 @@ export default function App() {
             <Route path="/wiki" element={<WikiIndex />} />
             <Route path="/w/:id/wiki" element={<WikiHome />} />
             <Route path="/w/:id/wiki/trash" element={<WikiTrash />} />
-            <Route path="/wiki/:id" element={<WikiPage />} />
+            <Route path="/wiki/:id" element={<WikiPage user={user} />} />
             <Route path="/search" element={<WikiSearch />} />
             <Route path="/calendar" element={<CalendarView />} />
             <Route path="/account" element={<Account user={user} onChanged={refresh} />} />

@@ -15,7 +15,7 @@
     "db:migrate": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.js",
     "sbom": "npm sbom --sbom-format cyclonedx --omit=dev > sbom.cdx.json",
-    "test:e2e": "node test/e2e/smoke.mjs",
+    "test:e2e": "node test/e2e/smoke.mjs && node test/e2e/wiki.mjs",
     "admin:create": "node scripts/create-admin.js",
     "postinstall": "npm run db:generate"
   },

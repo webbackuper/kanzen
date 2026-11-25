@@ -1,6 +1,6 @@
 # KanZen
 
-Kanban et gestion de projet **auto-hébergés, conçus pour un réseau fermé** (sans Internet), avec authentification Active Directory et comptes locaux. Un module Wiki est prévu (étape 4).
+Kanban et gestion de projet **auto-hébergés, conçus pour un réseau fermé** (sans Internet), avec authentification Active Directory et comptes locaux, et un wiki intégré.
 
 ## Fonctionnalités
 
@@ -9,6 +9,12 @@ Kanban et gestion de projet **auto-hébergés, conçus pour un réseau fermé** 
 - Tâches : description, échéance, assigné, couleur, sous-tâches, commentaires, pièces jointes.
 - Agenda mensuel des échéances, statistiques par tableau, export CSV.
 - Administration : comptes locaux, verrouillage et déverrouillage, révocation des sessions, journal d'audit.
+- Wiki par espace :
+  - pages et sous-pages en arborescence (glisser-déposer), icône par page, sommaire automatique, favoris, pages récentes, page d'accueil ;
+  - éditeur riche : menu « / », liens entre pages par « [[ » avec rétroliens, blocs de code colorés (bash, PowerShell, SQL, YAML…) avec copie, tableaux, encadrés, blocs dépliables, images et fichiers joints (coller ou glisser) ;
+  - co-édition en temps réel (Yjs sur la websocket, curseurs des autres éditeurs), historique des versions avec comparaison et restauration ;
+  - modèles de pages (procédure, compte rendu, fiche serveur, post-mortem, décision), import Markdown, export Markdown, export d'une section en ZIP, impression / PDF ;
+  - accès restreint par page ou par section, liens avec les tâches du Kanban dans les deux sens, recherche plein texte en français, corbeille.
 
 ## Sécurité, en bref
 

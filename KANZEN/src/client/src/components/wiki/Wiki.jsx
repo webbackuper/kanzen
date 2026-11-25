@@ -1,15 +1,18 @@
-// Module Wiki : arborescence de pages par espace, lecture / édition, historique, corbeille, recherche.
+// Module Wiki : arborescence de pages par espace, lecture / édition (co-édition), historique, corbeille, recherche.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import {
-  BookOpen, ChevronDown, ChevronRight, Download, FileText, FolderInput, History, Pencil, Plus, RotateCcw, Save, Search, Trash2, X,
+  BookOpen, ChevronDown, ChevronRight, Clock, Download, Ellipsis, FileArchive, FileText, FileUp, FolderInput, History, House,
+  Lock, Pencil, Plus, Printer, RotateCcw, Save, Search, Star, Trash2, X,
 } from 'lucide-react';
 import { api } from '../../api';
 import { ErrorBox, Loading, Modal, btnDanger, btnGhost, btnPrimary, card, input, useApi } from '../../ui';
 import { WikiEditor } from './WikiEditor';
-
-const fmt = (d) => new Date(d).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
+import { openCollab, colorOf } from './collab';
+import {
+  AccessModal, Backlinks, HistoryModal, IconPicker, NewPageModal, Peers, TaskLinks, Toc, docHeadings, fmt,
+} from './WikiPanels';
 
 /** Arbre à partir de la liste plate { id, parentId, … } (déjà triée par position). */
 function buildTree(pages) {
@@ -23,6 +26,17 @@ function buildTree(pages) {
   return make('root');
 }
 
+/** Chemin lisible d'une page (« Exploitation › Sauvegardes »), pour les suggestions « [[ ». */
+function withPaths(pages) {
+  const byId = new Map(pages.map((p) => [p.id, p]));
+  return pages.map((p) => {
+    const chain = [];
+    let cur = p.parentId ? byId.get(p.parentId) : null;
+    for (let i = 0; cur && i < 20; i++) { chain.unshift(cur.title); cur = cur.parentId ? byId.get(cur.parentId) : null; }
+    return { ...p, path: chain.join(' › ') };
+  });
+}
+
 /** Extrait de recherche : les balises \u0001…\u0002 de PostgreSQL deviennent <mark>, sans jamais interpréter de HTML. */
 export function Snippet({ text }) {
   // eslint-disable-next-line no-control-regex -- balises d'extrait posées par ts_headline (serveur)
@@ -30,7 +44,7 @@ export function Snippet({ text }) {
   return <>{parts.map((s, i) => (s.startsWith('\u0001') ? <mark key={i} className="bg-yellow-200 dark:bg-yellow-700/60 rounded px-0.5">{s.slice(1, -1)}</mark> : <span key={i}>{s}</span>))}</>;
 }
 
-// --- Données de l'espace (arborescence) partagées par les vues, rafraîchies en temps réel ---
+// --- Données de l'espace (arborescence, favoris, récents) partagées par les vues, rafraîchies en temps réel ---
 function useWikiTree(workspaceId, onEvent) {
   const [tree, setTree] = useState(null);
   const [error, setError] = useState(null);
@@ -52,18 +66,40 @@ function useWikiTree(workspaceId, onEvent) {
   return { tree, error, reload: load };
 }
 
-function TreeNode({ node, depth, currentId, canEdit, onAdd, expanded, toggle }) {
+// --- Arborescence (glisser-déposer : au-dessus, en dessous, ou dans une page) ---
+function TreeNode({ node, depth, currentId, canEdit, onAdd, expanded, toggle, dnd }) {
   const open = expanded.has(node.id);
+  const zone = dnd.target?.id === node.id ? dnd.target.zone : null;
+  const onDragOver = (e) => {
+    if (!dnd.dragging || !dnd.canDrop(node.id)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const r = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - r.top;
+    dnd.setTarget({ id: node.id, zone: y < r.height * 0.28 ? 'before' : y > r.height * 0.72 ? 'after' : 'inside' });
+  };
   return (
     <li>
-      <div className={`group flex items-center gap-1 rounded-md pr-1 ${node.id === currentId ? 'bg-indigo-50 dark:bg-indigo-900/40' : 'hover:bg-gray-100 dark:hover:bg-slate-800'}`} style={{ paddingLeft: depth * 12 }}>
+      <div
+        draggable={canEdit}
+        onDragStart={(e) => { e.dataTransfer.setData('text/plain', node.title); e.dataTransfer.effectAllowed = 'move'; dnd.start(node.id); }}
+        onDragEnd={dnd.end}
+        onDragOver={onDragOver}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget) && dnd.target?.id === node.id) dnd.setTarget(null); }}
+        onDrop={(e) => { e.preventDefault(); dnd.drop(); }}
+        className={`group flex items-center gap-1 rounded-md pr-1 border-y-2 ${zone === 'before' ? 'border-t-indigo-500 border-b-transparent' : zone === 'after' ? 'border-b-indigo-500 border-t-transparent' : 'border-transparent'}
+          ${zone === 'inside' ? 'bg-indigo-100 dark:bg-indigo-900/60' : node.id === currentId ? 'bg-indigo-50 dark:bg-indigo-900/40' : 'hover:bg-gray-100 dark:hover:bg-slate-800'}
+          ${dnd.dragging === node.id ? 'opacity-40' : ''}`}
+        style={{ paddingLeft: depth * 12 }}
+      >
         <button type="button" onClick={() => toggle(node.id)} aria-label={open ? 'Replier' : 'Déplier'} aria-expanded={open}
           className={`p-0.5 text-gray-400 ${node.children.length ? '' : 'invisible'}`}>
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
-        <Link to={`/wiki/${node.id}`} className={`flex-1 truncate py-1 text-sm ${node.id === currentId ? 'font-semibold text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-gray-300'}`}>
+        <Link to={`/wiki/${node.id}`} draggable={false} className={`flex-1 truncate py-1 text-sm ${node.id === currentId ? 'font-semibold text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-gray-300'}`}>
           {node.icon ? `${node.icon} ` : ''}{node.title}
         </Link>
+        {node.restricted && <Lock size={12} className="text-amber-500 shrink-0" aria-label="Accès restreint" />}
         {canEdit && (
           <button type="button" onClick={() => onAdd(node.id)} aria-label={`Nouvelle sous-page de ${node.title}`} title="Nouvelle sous-page"
             className="p-0.5 text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 focus:opacity-100">
@@ -72,10 +108,56 @@ function TreeNode({ node, depth, currentId, canEdit, onAdd, expanded, toggle }) 
         )}
       </div>
       {open && node.children.length > 0 && (
-        <ul>{node.children.map((c) => <TreeNode key={c.id} node={c} depth={depth + 1} currentId={currentId} canEdit={canEdit} onAdd={onAdd} expanded={expanded} toggle={toggle} />)}</ul>
+        <ul>{node.children.map((c) => <TreeNode key={c.id} node={c} depth={depth + 1} currentId={currentId} canEdit={canEdit} onAdd={onAdd} expanded={expanded} toggle={toggle} dnd={dnd} />)}</ul>
       )}
     </li>
   );
+}
+
+/** Glisser-déposer dans l'arborescence : calcule le parent et les voisins, puis appelle /move. */
+function useTreeDnd(pages, onMoved, expand) {
+  const [dragging, setDragging] = useState(null);
+  const [target, setTarget] = useState(null);
+  const byId = useMemo(() => new Map((pages ?? []).map((p) => [p.id, p])), [pages]);
+  const isInside = (id, ancestorId) => {
+    for (let cur = byId.get(id), i = 0; cur && i < 100; cur = byId.get(cur.parentId), i++) if (cur.id === ancestorId) return true;
+    return false;
+  };
+  const siblings = (parentId) => (pages ?? []).filter((p) => (p.parentId ?? null) === (parentId ?? null) && p.id !== dragging);
+  const moveTo = async (pageId, parentId, afterId, beforeId) => {
+    try {
+      await api.post(`/wiki/pages/${pageId}/move`, { parentId, afterId, beforeId });
+      if (parentId) expand(parentId);
+      onMoved();
+    } catch (x) { window.alert(x.message); }
+  };
+  return {
+    dragging, target, setTarget,
+    start: (id) => setDragging(id),
+    end: () => { setDragging(null); setTarget(null); },
+    canDrop: (id) => dragging && id !== dragging && !isInside(id, dragging),
+    drop: async () => {
+      const t = target;
+      const id = dragging;
+      setDragging(null); setTarget(null);
+      if (!t || !id) return;
+      const node = byId.get(t.id);
+      if (t.zone === 'inside') {
+        const kids = siblings(node.id);
+        return moveTo(id, node.id, kids.at(-1)?.id ?? null, null);
+      }
+      const list = siblings(node.parentId);
+      const i = list.findIndex((p) => p.id === node.id);
+      if (t.zone === 'before') return moveTo(id, node.parentId ?? null, list[i - 1]?.id ?? null, node.id);
+      return moveTo(id, node.parentId ?? null, node.id, list[i + 1]?.id ?? null);
+    },
+    /** Dépôt sous la liste : fin de la racine */
+    dropRoot: async () => {
+      const id = dragging;
+      setDragging(null); setTarget(null);
+      if (id) await moveTo(id, null, siblings(null).at(-1)?.id ?? null, null);
+    },
+  };
 }
 
 /** Mise en page commune : arborescence à gauche, contenu à droite. */
@@ -94,22 +176,27 @@ function WikiShell({ workspaceId, currentId, ancestorIds = [], onEvent, children
     try { localStorage.setItem(storageKey, JSON.stringify([...expanded])); } catch { /* stockage indisponible */ }
   }, [expanded, storageKey]);
   const toggle = (id) => setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const expand = (id) => setExpanded((s) => new Set([...s, id]));
   const [q, setQ] = useState('');
+  const [newPage, setNewPage] = useState(null); // { parentId }
 
   const canEdit = tree && tree.myRole !== 'VIEWER';
-  const add = async (parentId = null) => {
-    try {
-      const { page } = await api.post(`/workspaces/${workspaceId}/wiki`, { title: 'Sans titre', parentId });
-      if (parentId) setExpanded((s) => new Set([...s, parentId]));
-      reload();
-      navigate(`/wiki/${page.id}?edit=1`);
-    } catch (x) { window.alert(x.message); }
+  const add = (parentId = null) => setNewPage({ parentId });
+  const created = (page, { edit, count } = {}) => {
+    if (newPage?.parentId) expand(newPage.parentId);
+    setNewPage(null);
+    reload();
+    if (page) navigate(`/wiki/${page.id}${edit ? '?edit=1' : ''}`);
+    if (count > 1) window.alert(`${count} pages importées.`);
   };
   const nodes = useMemo(() => (tree ? buildTree(tree.pages) : []), [tree]);
+  const pagesById = useMemo(() => new Map((tree?.pages ?? []).map((p) => [p.id, p])), [tree]);
+  const dnd = useTreeDnd(tree?.pages, reload, expand);
+  const favorites = (tree?.favorites ?? []).map((id) => pagesById.get(id)).filter(Boolean);
 
   return (
     <div className="h-full flex">
-      <aside className="w-64 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/60 flex flex-col">
+      <aside className="w-64 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/60 flex flex-col kz-noprint">
         <div className="p-3 border-b border-gray-200 dark:border-slate-800 space-y-2">
           {tree && <Link to={`/w/${workspaceId}`} className="text-xs text-gray-500 hover:underline">← {tree.workspace.name}</Link>}
           <Link to={`/w/${workspaceId}/wiki`} className="flex items-center gap-2 font-semibold text-gray-900 dark:text-white"><BookOpen size={16} /> Wiki</Link>
@@ -121,7 +208,20 @@ function WikiShell({ workspaceId, currentId, ancestorIds = [], onEvent, children
             </label>
           </form>
         </div>
-        <nav aria-label="Pages du wiki" className="flex-1 overflow-y-auto p-2">
+        <nav aria-label="Pages du wiki" className="flex-1 overflow-y-auto p-2"
+          onDragOver={(e) => { if (dnd.dragging && e.target === e.currentTarget) { e.preventDefault(); dnd.setTarget(null); } }}
+          onDrop={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); dnd.dropRoot(); } }}>
+          {favorites.length > 0 && (
+            <div className="mb-3">
+              <h2 className="px-1 mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 flex items-center gap-1"><Star size={11} /> Favoris</h2>
+              <ul>
+                {favorites.map((p) => (
+                  <li key={p.id}><Link to={`/wiki/${p.id}`} className={`block truncate rounded-md px-2 py-1 text-sm ${p.id === currentId ? 'bg-indigo-50 dark:bg-indigo-900/40 font-semibold text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800'}`}>{p.icon ? `${p.icon} ` : ''}{p.title}</Link></li>
+                ))}
+              </ul>
+              <h2 className="px-1 mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Pages</h2>
+            </div>
+          )}
           {error && tree && <ErrorBox error={error} />}
           {error && !tree ? (
             <div className="space-y-2">
@@ -130,7 +230,8 @@ function WikiShell({ workspaceId, currentId, ancestorIds = [], onEvent, children
             </div>
           ) : !tree ? <Loading /> : nodes.length === 0
             ? <p className="text-sm text-gray-500 p-2">Aucune page.</p>
-            : <ul>{nodes.map((n) => <TreeNode key={n.id} node={n} depth={0} currentId={currentId} canEdit={canEdit} onAdd={add} expanded={expanded} toggle={toggle} />)}</ul>}
+            : <ul>{nodes.map((n) => <TreeNode key={n.id} node={n} depth={0} currentId={currentId} canEdit={canEdit} onAdd={add} expanded={expanded} toggle={toggle} dnd={dnd} />)}</ul>}
+          {canEdit && nodes.length > 1 && <p className="text-[11px] text-gray-400 px-2 mt-3">Astuce : glissez une page pour la réordonner ou la ranger dans une autre.</p>}
         </nav>
         {canEdit && (
           <div className="p-2 border-t border-gray-200 dark:border-slate-800 flex justify-between">
@@ -140,11 +241,49 @@ function WikiShell({ workspaceId, currentId, ancestorIds = [], onEvent, children
         )}
       </aside>
       <section className="flex-1 overflow-y-auto">{typeof children === 'function' ? children({ tree, error, reloadTree: reload, add }) : children}</section>
+      {newPage && (
+        <NewPageModal workspaceId={workspaceId} parentId={newPage.parentId} parentTitle={newPage.parentId ? pagesById.get(newPage.parentId)?.title : null}
+          onClose={() => setNewPage(null)} onCreated={created} />
+      )}
     </div>
   );
 }
 
 // --- Accueil du wiki d'un espace ---
+function HomePageBlock({ pageId }) {
+  const navigate = useNavigate();
+  const { data } = useApi(() => api.get(`/wiki/pages/${pageId}`), [pageId]);
+  if (!data) return null;
+  const p = data.page;
+  return (
+    <section className={`${card} p-6 mb-8`}>
+      <div className="flex justify-between items-start gap-2 mb-3">
+        <h2 className="text-xl font-bold text-gray-900 dark:text-white">{p.icon ? `${p.icon} ` : ''}{p.title}</h2>
+        <Link to={`/wiki/${p.id}`} className={btnGhost}>Ouvrir</Link>
+      </div>
+      <WikiEditor content={p.content} onNavigate={(href) => navigate(href)} />
+    </section>
+  );
+}
+
+function PageList({ title, icon, pages, empty, meta }) {
+  return (
+    <>
+      <h2 className="mt-8 mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500 flex items-center gap-1">{icon} {title}</h2>
+      {pages.length === 0 ? <p className="text-sm text-gray-500">{empty}</p> : (
+        <ul className={`${card} divide-y divide-gray-100 dark:divide-slate-800`}>
+          {pages.map((p) => (
+            <li key={p.id}><Link to={`/wiki/${p.id}`} className="flex justify-between gap-4 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-800/60">
+              <span className="flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200 min-w-0"><FileText size={14} className="text-gray-400 shrink-0" /> <span className="truncate">{p.icon ? `${p.icon} ` : ''}{p.title}</span></span>
+              <span className="text-xs text-gray-500 shrink-0">{meta(p)}</span>
+            </Link></li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
 export function WikiHome() {
   const { id } = useParams();
   return (
@@ -152,23 +291,23 @@ export function WikiHome() {
       {({ tree, error, add }) => {
         // En erreur, le message et « Réessayer » sont dans le panneau de gauche : pas de chargement sans fin ici
         if (!tree) return error ? <p className="p-8 text-sm text-gray-500">Le wiki de cet espace n&apos;a pas pu être chargé.</p> : <Loading />;
-        const recent = [...tree.pages].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)).slice(0, 10);
+        const byId = new Map(tree.pages.map((p) => [p.id, p]));
+        const recentlyChanged = [...tree.pages].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)).slice(0, 8);
+        const viewed = tree.recent.map((r) => ({ ...byId.get(r.pageId), viewedAt: r.viewedAt })).filter((p) => p.id);
+        const favorites = tree.favorites.map((fid) => byId.get(fid)).filter(Boolean);
         return (
           <div className="p-8 max-w-3xl mx-auto">
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Wiki · {tree.workspace.name}</h1>
-            <p className="text-sm text-gray-500 mb-6">Documentation de l&apos;espace : procédures, architecture, comptes rendus…</p>
-            {tree.myRole !== 'VIEWER' && <button type="button" className={btnPrimary} onClick={() => add(null)}><Plus size={16} /> Nouvelle page</button>}
-            <h2 className="mt-8 mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Modifiées récemment</h2>
-            {recent.length === 0 ? <p className="text-sm text-gray-500">Aucune page pour l&apos;instant.</p> : (
-              <ul className={`${card} divide-y divide-gray-100 dark:divide-slate-800`}>
-                {recent.map((p) => (
-                  <li key={p.id}><Link to={`/wiki/${p.id}`} className="flex justify-between gap-4 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-800/60">
-                    <span className="flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200"><FileText size={14} className="text-gray-400" /> {p.icon ? `${p.icon} ` : ''}{p.title}</span>
-                    <span className="text-xs text-gray-500 shrink-0">{fmt(p.updatedAt)}</span>
-                  </Link></li>
-                ))}
-              </ul>
-            )}
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Wiki · {tree.workspace.name}</h1>
+                <p className="text-sm text-gray-500">Documentation de l&apos;espace : procédures, architecture, comptes rendus… Tapez « / » dans une page pour insérer un bloc, « [[ » pour lier une page.</p>
+              </div>
+              {tree.myRole !== 'VIEWER' && <button type="button" className={btnPrimary} onClick={() => add(null)}><Plus size={16} /> Nouvelle page</button>}
+            </div>
+            {tree.homePageId && <HomePageBlock pageId={tree.homePageId} />}
+            {favorites.length > 0 && <PageList title="Mes favoris" icon={<Star size={14} />} pages={favorites} empty="" meta={(p) => fmt(p.updatedAt)} />}
+            <PageList title="Consultées récemment" icon={<Clock size={14} />} pages={viewed} empty="Les pages que vous ouvrez apparaîtront ici." meta={(p) => `vue le ${fmt(p.viewedAt)}`} />
+            <PageList title="Modifiées récemment" icon={<Pencil size={14} />} pages={recentlyChanged} empty="Aucune page pour l'instant." meta={(p) => fmt(p.updatedAt)} />
           </div>
         );
       }}
@@ -176,45 +315,7 @@ export function WikiHome() {
   );
 }
 
-// --- Historique d'une page ---
-function HistoryModal({ page, canEdit, onClose, onRestored }) {
-  const { data, error } = useApi(() => api.get(`/wiki/pages/${page.id}/revisions`), [page.id]);
-  const [preview, setPreview] = useState(null);
-  const [err, setErr] = useState(null);
-  const show = async (r) => { try { setPreview((await api.get(`/wiki/revisions/${r.id}`)).revision); } catch (x) { setErr(x); } };
-  const restore = async () => {
-    if (!window.confirm(`Restaurer la version ${preview.version} ? La version actuelle reste disponible dans l'historique.`)) return;
-    try { const r = await api.post(`/wiki/revisions/${preview.id}/restore`, { version: page.version }); onRestored(r.page); } catch (x) { setErr(x); }
-  };
-  return (
-    <Modal title={`Historique : ${page.title}`} wide onClose={onClose}>
-      <ErrorBox error={error ?? err} />
-      <div className="grid md:grid-cols-3 gap-4">
-        <ul className="md:col-span-1 max-h-[60vh] overflow-y-auto divide-y divide-gray-100 dark:divide-slate-800">
-          {!data ? <Loading /> : data.revisions.map((r) => (
-            <li key={r.id}>
-              <button type="button" onClick={() => show(r)} className={`w-full text-left px-2 py-2 text-sm ${preview?.id === r.id ? 'bg-indigo-50 dark:bg-indigo-900/40' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
-                <span className="block font-medium text-gray-800 dark:text-gray-200">Version {r.version}{r.version === page.version ? ' (actuelle)' : ''}</span>
-                <span className="block text-xs text-gray-500">{fmt(r.createdAt)} · {r.author?.displayName ?? 'compte supprimé'}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-        <div className="md:col-span-2 max-h-[60vh] overflow-y-auto border border-gray-200 dark:border-slate-700 rounded-lg p-4">
-          {!preview ? <p className="text-sm text-gray-500">Choisissez une version à consulter.</p> : <>
-            <h3 className="text-xl font-bold mb-3 text-gray-900 dark:text-white">{preview.title}</h3>
-            <WikiEditor key={preview.id} content={preview.content} />
-          </>}
-        </div>
-      </div>
-      {preview && canEdit && preview.version !== page.version && (
-        <div className="mt-4 flex justify-end"><button type="button" className={btnPrimary} onClick={restore}><RotateCcw size={16} /> Restaurer cette version</button></div>
-      )}
-    </Modal>
-  );
-}
-
-// --- Déplacement dans l'arborescence ---
+// --- Déplacement dans l'arborescence (alternative au glisser-déposer, accessible au clavier) ---
 function MoveModal({ page, pages, onClose, onMoved }) {
   // Exclusion de la page et de sa descendance (pas de cycle)
   const excluded = useMemo(() => {
@@ -225,7 +326,7 @@ function MoveModal({ page, pages, onClose, onMoved }) {
   }, [page.id, pages]);
   const options = useMemo(() => {
     const out = [];
-    const walk = (nodes, depth) => { for (const n of nodes) { if (excluded.has(n.id)) continue; out.push({ id: n.id, label: `${'  '.repeat(depth)}${n.title}` }); walk(n.children, depth + 1); } };
+    const walk = (nodes, depth) => { for (const n of nodes) { if (excluded.has(n.id)) continue; out.push({ id: n.id, label: `${'  '.repeat(depth)}${n.title}` }); walk(n.children, depth + 1); } };
     walk(buildTree(pages), 0);
     return out;
   }, [pages, excluded]);
@@ -265,25 +366,61 @@ function MoveModal({ page, pages, onClose, onMoved }) {
   );
 }
 
-// --- Page : lecture et édition ---
-export function WikiPage() {
+/** Menu « Plus » de la page */
+function MoreMenu({ items }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+  return (
+    <span className="relative" ref={ref}>
+      <button type="button" className={btnGhost} onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open} aria-label="Plus d'actions"><Ellipsis size={16} /></button>
+      {open && (
+        <span role="menu" className="absolute right-0 top-9 z-30 w-64 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-1">
+          {items.filter(Boolean).map((it) => {
+            const cls = `w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left ${it.danger ? 'text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-800'}`;
+            return it.href
+              ? <a key={it.label} role="menuitem" href={it.href} className={cls} onClick={() => setOpen(false)}>{it.icon} {it.label}</a>
+              : <button key={it.label} type="button" role="menuitem" className={cls} onClick={() => { setOpen(false); it.run(); }}>{it.icon} {it.label}</button>;
+          })}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// --- Page : lecture et édition (co-édition en temps réel quand c'est possible) ---
+export function WikiPage({ user }) {
   const { id } = useParams();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const [page, setPage] = useState(null);
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(null); // { title, content }
+  const [draft, setDraft] = useState(null); // { title, icon, content }
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(null);
   const [notice, setNotice] = useState(null);
   const [modal, setModal] = useState(null);
+  const [session, setSession] = useState(null); // co-édition : objet de session, false = indisponible (édition seule)
+  const [peers, setPeers] = useState([]);
+  const [linksKey, setLinksKey] = useState(0);
   const editingRef = useRef(false);
   editingRef.current = editing;
+  const sessionRef = useRef(null);
+  sessionRef.current = session;
+  const articleRef = useRef(null);
 
   const load = useCallback(() => api.get(`/wiki/pages/${id}`).then((r) => { setPage(r.page); setError(null); }, setError), [id]);
-  useEffect(() => { setEditing(false); setDirty(false); setConflict(null); setNotice(null); setModal(null); load(); }, [id, load]);
+
+  const closeSession = () => { sessionRef.current?.close?.(); sessionRef.current = null; setSession(null); setPeers([]); };
+  useEffect(() => { closeSession(); setEditing(false); setDirty(false); setConflict(null); setNotice(null); setModal(null); load(); }, [id, load]);
+  useEffect(() => () => closeSession(), []);
 
   // Ouverture directe en édition (nouvelle page)
   useEffect(() => {
@@ -295,10 +432,20 @@ export function WikiPage() {
 
   // Modifications d'autres utilisateurs reçues en temps réel
   const onEvent = useCallback((e) => {
-    if (e.pageId !== id) return;
+    if (e.reason === 'links') { setLinksKey((k) => k + 1); return; }
+    if (e.pageId !== id) { setLinksKey((k) => k + 1); return; }
     if (e.reason === 'purge') { navigate(-1); return; }
-    if (editingRef.current) { if (e.reason === 'update') setNotice(`${e.by} vient d'enregistrer cette page. Votre enregistrement sera contrôlé.`); } else load();
-  }, [id, load, navigate]);
+    if (editingRef.current) {
+      if (e.reason !== 'update') return;
+      if (sessionRef.current) {
+        // Co-édition : le contenu est déjà partagé, seule la version de référence change
+        api.get(`/wiki/pages/${id}`).then((r) => setPage((p) => ({ ...p, version: r.page.version, updatedAt: r.page.updatedAt, updatedBy: r.page.updatedBy })), () => {});
+        if (e.by !== user?.displayName) setNotice(`${e.by} a enregistré la page.`);
+      } else {
+        setNotice(`${e.by} vient d'enregistrer cette page. Votre enregistrement sera contrôlé.`);
+      }
+    } else load();
+  }, [id, load, navigate, user?.displayName]);
 
   // Protection contre la perte de saisie
   useEffect(() => {
@@ -308,21 +455,53 @@ export function WikiPage() {
     return () => window.removeEventListener('beforeunload', h);
   }, [dirty]);
 
-  function startEdit(p = page) { setDraft({ title: p.title, content: p.content }); setDirty(false); setConflict(null); setNotice(null); setEditing(true); }
+  function startEdit(p = page) {
+    setDraft({ title: p.title, icon: p.icon ?? null, content: p.content });
+    setDirty(false); setConflict(null); setNotice(null); setSession(null); setEditing(true);
+    if (!user) { setSession(false); return; }
+    openCollab(p.id, user, {
+      onPeers: setPeers,
+      onReset: () => {
+        closeSession(); setEditing(false); setDirty(false);
+        setNotice('La page a été restaurée ou placée dans la corbeille par un autre utilisateur : l\'édition a été fermée.');
+        load();
+      },
+    }).then((s) => {
+      if (!editingRef.current) { s.close(); return; }
+      if (s.seed) { s.meta.set('title', p.title); s.meta.set('icon', p.icon ?? ''); } else {
+        setDraft((d) => ({ ...d, title: s.meta.get('title') ?? d.title, icon: s.meta.get('icon') || null }));
+      }
+      s.meta.observe((ev) => {
+        if (ev.transaction.local) return;
+        setDraft((d) => ({ ...d, title: s.meta.get('title') ?? d.title, icon: s.meta.get('icon') || null }));
+      });
+      setPeers(s.peers());
+      setSession(s);
+    }, () => setSession(false));
+  }
+  const setTitle = (v) => { setDraft((d) => ({ ...d, title: v })); setDirty(true); sessionRef.current?.meta?.set('title', v); };
+  const setIcon = (v) => { setDraft((d) => ({ ...d, icon: v })); setDirty(true); sessionRef.current?.meta?.set('icon', v ?? ''); };
+
   const cancel = () => {
-    if (dirty && !window.confirm('Abandonner vos modifications ?')) return;
-    setEditing(false); setDirty(false); setConflict(null); setNotice(null);
+    const msg = peers.length
+      ? 'Quitter l\'édition ? Vos modifications non enregistrées restent visibles des autres éditeurs, qui peuvent les enregistrer.'
+      : 'Abandonner vos modifications ?';
+    if ((dirty || peers.length) && !window.confirm(msg)) return;
+    closeSession(); setEditing(false); setDirty(false); setConflict(null); setNotice(null);
   };
 
-  const save = async (version = page.version) => {
+  const save = async (version = page.version, retried = false) => {
     setSaving(true);
     try {
-      const r = await api.patch(`/wiki/pages/${id}`, { version, title: draft.title.trim() || 'Sans titre', content: draft.content });
+      const r = await api.patch(`/wiki/pages/${id}`, { version, title: draft.title.trim() || 'Sans titre', icon: draft.icon || null, content: draft.content });
       setPage((p) => ({ ...p, ...r.page }));
-      setEditing(false); setDirty(false); setConflict(null); setNotice(null);
+      closeSession(); setEditing(false); setDirty(false); setConflict(null); setNotice(null);
     } catch (x) {
-      if (x.status === 409 && x.code === 'WIKI_CONFLICT') setConflict(x);
-      else setError(x);
+      if (x.status === 409 && x.code === 'WIKI_CONFLICT') {
+        // En co-édition, l'autre enregistrement porte sur le même document partagé : on enregistre par-dessus
+        if (sessionRef.current && !retried) { const latest = (await api.get(`/wiki/pages/${id}`)).page; setSaving(false); return save(latest.version, true); }
+        setConflict(x);
+      } else setError(x);
     } finally { setSaving(false); }
   };
   // Ctrl+S
@@ -337,91 +516,154 @@ export function WikiPage() {
     const latest = (await api.get(`/wiki/pages/${id}`)).page;
     await save(latest.version); // la version de l'autre utilisateur reste dans l'historique
   };
-  const discardMine = async () => { setEditing(false); setDirty(false); setConflict(null); await load(); };
+  const discardMine = async () => { closeSession(); setEditing(false); setDirty(false); setConflict(null); await load(); };
 
-  const uploadImage = async (file) => {
-    try { return (await api.upload(`/wiki/pages/${id}/files`, file)).file.url; } catch (x) { window.alert(x.message); return null; }
+  const uploadFile = async (file) => {
+    try {
+      const f = (await api.upload(`/wiki/pages/${id}/files`, file)).file;
+      return { url: f.url, inline: f.inline, filename: f.filename, size: f.size, mimetype: f.mimetype };
+    } catch (x) { window.alert(x.message); return null; }
   };
   const trash = async () => {
     if (!window.confirm(`Placer « ${page.title} » et ses sous-pages dans la corbeille ?`)) return;
     try { await api.del(`/wiki/pages/${id}`); navigate(page.parentId ? `/wiki/${page.parentId}` : `/w/${page.workspaceId}/wiki`); } catch (x) { setError(x); }
   };
   const restore = async () => { try { await api.post(`/wiki/pages/${id}/restore`); load(); } catch (x) { setError(x); } };
+  const toggleFavorite = async () => {
+    try {
+      if (page.favorite) await api.del(`/wiki/pages/${id}/favorite`); else await api.put(`/wiki/pages/${id}/favorite`);
+      setPage((p) => ({ ...p, favorite: !p.favorite }));
+    } catch (x) { setError(x); }
+  };
+
+  const headings = useMemo(() => docHeadings(page?.content), [page?.content]);
 
   if (!page) return error ? <div className="p-6"><ErrorBox error={error} /></div> : <Loading />;
   const canEdit = page.myRole !== 'VIEWER' && !page.deletedAt;
+  const isOwner = page.myRole === 'OWNER';
+  const collab = session ? { ydoc: session.ydoc, provider: session.provider, seed: session.seed, user: { name: user.displayName, color: colorOf(user.id) } } : undefined;
 
   return (
     <WikiShell workspaceId={page.workspaceId} currentId={page.id} ancestorIds={page.breadcrumb.map((b) => b.id)} onEvent={onEvent}>
-      {({ tree, reloadTree }) => (
-        <article className="max-w-4xl mx-auto px-6 py-6">
-          <nav aria-label="Fil d'Ariane" className="text-xs text-gray-500 mb-3 flex flex-wrap gap-1">
-            <Link to={`/w/${page.workspaceId}/wiki`} className="hover:underline">Wiki</Link>
-            {page.breadcrumb.map((b) => <span key={b.id}>/ <Link to={`/wiki/${b.id}`} className="hover:underline">{b.title}</Link></span>)}
-          </nav>
-          {page.deletedAt && (
-            <div role="status" className="mb-4 p-3 rounded-md bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 text-sm flex justify-between items-center gap-2">
-              Cette page est dans la corbeille depuis le {fmt(page.deletedAt)}.
-              {page.myRole !== 'VIEWER' && <button type="button" className={btnGhost} onClick={restore}><RotateCcw size={16} /> Restaurer</button>}
-            </div>
-          )}
-          <ErrorBox error={error} />
-          {conflict && (
-            <div role="alert" className="mb-4 p-3 rounded-md bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-sm space-y-2">
-              <p><strong>{conflict.message}.</strong> Vos modifications ne sont pas perdues : choisissez comment continuer.</p>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" className={btnPrimary} onClick={overwrite}>Enregistrer ma version (l&apos;autre reste dans l&apos;historique)</button>
-                <button type="button" className={btnGhost} onClick={discardMine}>Abandonner ma version et recharger</button>
-              </div>
-            </div>
-          )}
-          {notice && !conflict && <div role="status" className="mb-4 p-3 rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 text-sm">{notice}</div>}
+      {({ tree, reloadTree, add }) => {
+        const setHome = async (pageId) => { try { await api.put(`/workspaces/${page.workspaceId}/wiki/home`, { pageId }); reloadTree(); } catch (x) { setError(x); } };
+        const isHome = tree?.homePageId === page.id;
+        const linkPages = tree ? withPaths(tree.pages).filter((p) => p.id !== page.id) : [];
+        return (
+          <div className="flex justify-center gap-8 px-6 py-6">
+            <article ref={articleRef} className="w-full max-w-4xl min-w-0">
+              <nav aria-label="Fil d'Ariane" className="text-xs text-gray-500 mb-3 flex flex-wrap gap-1 kz-noprint">
+                <Link to={`/w/${page.workspaceId}/wiki`} className="hover:underline">Wiki</Link>
+                {page.breadcrumb.map((b) => <span key={b.id}>/ <Link to={`/wiki/${b.id}`} className="hover:underline">{b.title}</Link></span>)}
+              </nav>
+              {page.deletedAt && (
+                <div role="status" className="mb-4 p-3 rounded-md bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 text-sm flex justify-between items-center gap-2">
+                  Cette page est dans la corbeille depuis le {fmt(page.deletedAt)}.
+                  {page.myRole !== 'VIEWER' && <button type="button" className={btnGhost} onClick={restore}><RotateCcw size={16} /> Restaurer</button>}
+                </div>
+              )}
+              <ErrorBox error={error} />
+              {conflict && (
+                <div role="alert" className="mb-4 p-3 rounded-md bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-sm space-y-2">
+                  <p><strong>{conflict.message}.</strong> Vos modifications ne sont pas perdues : choisissez comment continuer.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className={btnPrimary} onClick={overwrite}>Enregistrer ma version (l&apos;autre reste dans l&apos;historique)</button>
+                    <button type="button" className={btnGhost} onClick={discardMine}>Abandonner ma version et recharger</button>
+                  </div>
+                </div>
+              )}
+              {notice && !conflict && (
+                <div role="status" className="mb-4 p-3 rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 text-sm flex justify-between gap-2">
+                  <span>{notice}</span><button type="button" onClick={() => setNotice(null)} aria-label="Fermer le message"><X size={14} /></button>
+                </div>
+              )}
 
-          <header className="flex flex-wrap items-start justify-between gap-3 mb-4">
-            {editing
-              ? <input className="flex-1 min-w-0 text-3xl font-bold bg-transparent border-b border-dashed border-gray-300 dark:border-slate-600 focus:outline-none text-gray-900 dark:text-white" aria-label="Titre de la page"
-                  value={draft.title} maxLength={200} onChange={(e) => { setDraft((d) => ({ ...d, title: e.target.value })); setDirty(true); }} />
-              : <h1 className="flex-1 min-w-0 text-3xl font-bold text-gray-900 dark:text-white break-words">{page.icon ? `${page.icon} ` : ''}{page.title}</h1>}
-            <div className="flex flex-wrap gap-1">
-              {editing ? <>
-                <button type="button" className={btnPrimary} onClick={() => save()} disabled={saving}><Save size={16} /> {saving ? 'Enregistrement…' : 'Enregistrer'}</button>
-                <button type="button" className={btnGhost} onClick={cancel}><X size={16} /> Annuler</button>
-              </> : <>
-                {canEdit && <button type="button" className={btnPrimary} onClick={() => startEdit()}><Pencil size={16} /> Modifier</button>}
-                <button type="button" className={btnGhost} onClick={() => setModal('history')}><History size={16} /> Historique</button>
-                <a className={btnGhost} href={`/api/wiki/pages/${page.id}/export.md`}><Download size={16} /> Markdown</a>
-                {canEdit && <button type="button" className={btnGhost} onClick={() => setModal('move')}><FolderInput size={16} /> Déplacer</button>}
-                {canEdit && <button type="button" className={btnDanger} onClick={trash} aria-label="Placer dans la corbeille"><Trash2 size={16} /></button>}
-              </>}
-            </div>
-          </header>
-          <p className="text-xs text-gray-500 mb-6">
-            Modifiée le {fmt(page.updatedAt)}{page.updatedBy ? ` par ${page.updatedBy.displayName}` : ''} · version {page.version}
-          </p>
+              <header className="flex flex-wrap items-start justify-between gap-3 mb-2">
+                {editing
+                  ? <div className="flex-1 min-w-0 flex items-center gap-3">
+                      <IconPicker value={draft.icon} onChange={setIcon} />
+                      <input className="flex-1 min-w-0 text-3xl font-bold bg-transparent border-b border-dashed border-gray-300 dark:border-slate-600 focus:outline-none text-gray-900 dark:text-white" aria-label="Titre de la page"
+                        value={draft.title} maxLength={200} onChange={(e) => setTitle(e.target.value)} />
+                    </div>
+                  : <h1 className="flex-1 min-w-0 text-3xl font-bold text-gray-900 dark:text-white break-words">{page.icon ? `${page.icon} ` : ''}{page.title}</h1>}
+                <div className="flex flex-wrap items-center gap-1 kz-noprint">
+                  {editing ? <>
+                    <Peers peers={peers} />
+                    <button type="button" className={btnPrimary} onClick={() => save()} disabled={saving || session === null}><Save size={16} /> {saving ? 'Enregistrement…' : 'Enregistrer'}</button>
+                    <button type="button" className={btnGhost} onClick={cancel}><X size={16} /> {peers.length ? 'Quitter' : 'Annuler'}</button>
+                  </> : <>
+                    {canEdit && <button type="button" className={btnPrimary} onClick={() => startEdit()}><Pencil size={16} /> Modifier</button>}
+                    <button type="button" className={btnGhost} onClick={toggleFavorite} aria-pressed={page.favorite} title={page.favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'} aria-label={page.favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}>
+                      <Star size={16} className={page.favorite ? 'fill-yellow-400 text-yellow-500' : ''} />
+                    </button>
+                    <button type="button" className={btnGhost} onClick={() => setModal('history')}><History size={16} /> Historique</button>
+                    <MoreMenu items={[
+                      canEdit && { label: 'Nouvelle sous-page', icon: <Plus size={14} />, run: () => add(page.id) },
+                      canEdit && { label: 'Importer du Markdown ici', icon: <FileUp size={14} />, run: () => add(page.id) },
+                      canEdit && { label: 'Déplacer…', icon: <FolderInput size={14} />, run: () => setModal('move') },
+                      { label: page.restricted || page.restrictedBy.length ? 'Accès restreint…' : 'Restreindre l\'accès…', icon: <Lock size={14} />, run: () => setModal('access') },
+                      isOwner && !page.deletedAt && (isHome
+                        ? { label: 'Ne plus afficher en accueil', icon: <House size={14} />, run: () => setHome(null) }
+                        : { label: 'Afficher en tête de l\'accueil', icon: <House size={14} />, run: () => setHome(page.id) }),
+                      { label: 'Exporter en Markdown', icon: <Download size={14} />, href: `/api/wiki/pages/${page.id}/export.md` },
+                      { label: 'Exporter la section (ZIP)', icon: <FileArchive size={14} />, href: `/api/wiki/pages/${page.id}/export.zip` },
+                      { label: 'Imprimer / PDF', icon: <Printer size={14} />, run: () => window.print() },
+                      canEdit && { label: 'Placer dans la corbeille', icon: <Trash2 size={14} />, run: trash, danger: true },
+                    ]} />
+                  </>}
+                </div>
+              </header>
+              <p className="text-xs text-gray-500 mb-6 flex flex-wrap items-center gap-2">
+                <span>Modifiée le {fmt(page.updatedAt)}{page.updatedBy ? ` par ${page.updatedBy.displayName}` : ''} · version {page.version}</span>
+                {page.restrictedBy.length > 0 && (
+                  <button type="button" onClick={() => setModal('access')} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200">
+                    <Lock size={11} /> Accès restreint{page.restricted ? '' : ` (section « ${page.restrictedBy[0].title} »)`}
+                  </button>
+                )}
+                {isHome && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-200"><House size={11} /> Accueil du wiki</span>}
+                {editing && session === false && <span className="text-amber-600">Co-édition indisponible : vous éditez seul.</span>}
+              </p>
 
-          <WikiEditor
-            content={editing ? draft.content : page.content}
-            editable={editing}
-            onChange={(c) => { setDraft((d) => ({ ...d, content: c })); setDirty(true); }}
-            onUploadImage={uploadImage}
-            onNavigate={(href) => navigate(href)}
-          />
+              {!editing && <Toc headings={headings} containerRef={articleRef} compact />}
 
-          {!editing && page.children.length > 0 && (
-            <section className="mt-10">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-2">Sous-pages</h2>
-              <ul className="grid sm:grid-cols-2 gap-2">
-                {page.children.map((c) => (
-                  <li key={c.id}><Link to={`/wiki/${c.id}`} className={`${card} flex items-center gap-2 px-3 py-2 text-sm hover:shadow-sm text-gray-800 dark:text-gray-200`}><FileText size={14} className="text-gray-400" /> {c.icon ? `${c.icon} ` : ''}{c.title}</Link></li>
-                ))}
-              </ul>
-            </section>
-          )}
+              {editing && session === null ? <Loading /> : (
+                <WikiEditor
+                  key={editing ? (session ? `collab-${page.id}` : `solo-${page.id}`) : `read-${page.id}`}
+                  content={editing ? draft.content : page.content}
+                  editable={editing}
+                  collab={editing ? collab : undefined}
+                  pages={linkPages}
+                  onChange={(c) => { setDraft((d) => ({ ...d, content: c })); setDirty(true); }}
+                  onUploadFile={uploadFile}
+                  onNavigate={(href) => navigate(href)}
+                />
+              )}
 
-          {modal === 'history' && <HistoryModal page={page} canEdit={canEdit} onClose={() => setModal(null)} onRestored={(p) => { setPage((x) => ({ ...x, ...p })); setModal(null); }} />}
-          {modal === 'move' && tree && <MoveModal page={page} pages={tree.pages} onClose={() => setModal(null)} onMoved={() => { setModal(null); reloadTree(); load(); }} />}
-        </article>
-      )}
+              {!editing && page.children.length > 0 && (
+                <section className="mt-10 kz-noprint">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-2">Sous-pages</h2>
+                  <ul className="grid sm:grid-cols-2 gap-2">
+                    {page.children.map((c) => (
+                      <li key={c.id}><Link to={`/wiki/${c.id}`} className={`${card} flex items-center gap-2 px-3 py-2 text-sm hover:shadow-sm text-gray-800 dark:text-gray-200`}><FileText size={14} className="text-gray-400" /> {c.icon ? `${c.icon} ` : ''}{c.title}</Link></li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+              {!editing && !page.deletedAt && <TaskLinks page={page} canEdit={canEdit} refreshKey={linksKey} />}
+              {!editing && <Backlinks pageId={page.id} refreshKey={`${linksKey}-${page.version}`} />}
+
+              {modal === 'history' && <HistoryModal page={page} canEdit={canEdit} onClose={() => setModal(null)} onRestored={(p) => { setPage((x) => ({ ...x, ...p })); setModal(null); }} />}
+              {modal === 'move' && tree && <MoveModal page={page} pages={tree.pages} onClose={() => setModal(null)} onMoved={() => { setModal(null); reloadTree(); load(); }} />}
+              {modal === 'access' && <AccessModal page={page} onClose={() => setModal(null)} onSaved={() => { setModal(null); reloadTree(); load(); }} />}
+            </article>
+            {!editing && headings.filter((h) => h.level <= 3 && h.text).length >= 2 && (
+              <aside className="hidden xl:block w-56 shrink-0">
+                <div className="sticky top-6"><Toc headings={headings} containerRef={articleRef} /></div>
+              </aside>
+            )}
+          </div>
+        );
+      }}
     </WikiShell>
   );
 }

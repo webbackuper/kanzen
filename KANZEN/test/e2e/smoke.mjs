@@ -95,7 +95,9 @@ try {
   await page.getByRole('link', { name: 'Procédure de sauvegarde' }).last().click();
   await page.getByText('Test de restauration trimestriel', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Nouvelle sous-page de Accueil' }).click({ force: true });
+  await page.getByRole('dialog').getByRole('button', { name: /Page vierge/ }).click(); // choix du modèle
   const titleBox = page.getByLabel('Titre de la page');
+  await page.getByRole('button', { name: 'Enregistrer' }).and(page.locator(':not([disabled])')).waitFor(); // co-édition prête
   await titleBox.fill('Runbook E2E');
   const editor = page.getByLabel('Contenu de la page');
   await editor.click();

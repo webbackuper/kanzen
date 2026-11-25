@@ -1,0 +1,78 @@
+// Co-édition : document Yjs partagé avec les autres éditeurs de la page, via Socket.io (même origine, cookie de session).
+import { io } from 'socket.io-client';
+import * as Y from 'yjs';
+import * as awarenessProtocol from 'y-protocols/awareness';
+
+const COLORS = ['#e11d48', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#4d7c0f'];
+export const colorOf = (id) => COLORS[[...String(id)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % COLORS.length];
+
+const asBytes = (v) => (v instanceof Uint8Array ? v : new Uint8Array(v));
+
+/**
+ * Ouvre une session de co-édition sur une page.
+ * Résout { ydoc, provider, seed, meta, peers(), close() } ; rejette si l'accès est refusé.
+ * onPeers(list) : présence des autres éditeurs ; onReset() : la page a été remplacée (restauration, corbeille).
+ */
+export function openCollab(pageId, user, { onPeers, onReset } = {}) {
+  return new Promise((resolve, reject) => {
+    const socket = io({ path: '/socket.io', withCredentials: true, transports: ['websocket', 'polling'] });
+    const ydoc = new Y.Doc();
+    const awareness = new awarenessProtocol.Awareness(ydoc);
+    awareness.setLocalStateField('user', { name: user.displayName, color: colorOf(user.id), id: user.id });
+    let joined = false;
+    let closed = false;
+
+    const peers = () => [...awareness.getStates().entries()]
+      .filter(([id, s]) => id !== ydoc.clientID && s.user)
+      .map(([id, s]) => ({ clientId: id, ...s.user }));
+
+    ydoc.on('update', (update, origin) => {
+      if (origin !== 'remote' && joined) socket.emit('wiki-collab:update', { pageId, update });
+    });
+    awareness.on('update', ({ added, updated, removed }, origin) => {
+      if (origin !== 'remote' && joined) {
+        socket.emit('wiki-collab:awareness', { pageId, update: awarenessProtocol.encodeAwarenessUpdate(awareness, [...added, ...updated, ...removed]) });
+      }
+      onPeers?.(peers());
+    });
+    socket.on('wiki-collab:update', (m) => { if (m.pageId === pageId) Y.applyUpdate(ydoc, asBytes(m.update), 'remote'); });
+    socket.on('wiki-collab:awareness', (m) => { if (m.pageId === pageId) awarenessProtocol.applyAwarenessUpdate(awareness, asBytes(m.update), 'remote'); });
+    socket.on('wiki-collab:reset', (m) => { if (m.pageId === pageId) onReset?.(); });
+
+    const join = () => socket.emit('wiki-collab:join', { pageId }, (ack) => {
+      if (closed) return;
+      if (!ack?.ok) { if (!joined) { cleanup(); reject(new Error('Co-édition indisponible pour cette page')); } return; }
+      if (ack.state) Y.applyUpdate(ydoc, asBytes(ack.state), 'remote');
+      if (ack.awareness) awarenessProtocol.applyAwarenessUpdate(awareness, asBytes(ack.awareness), 'remote');
+      const first = !joined;
+      joined = true;
+      // Présence locale annoncée aux autres
+      socket.emit('wiki-collab:awareness', { pageId, update: awarenessProtocol.encodeAwarenessUpdate(awareness, [ydoc.clientID]) });
+      if (first) {
+        resolve({
+          ydoc,
+          provider: { awareness },
+          seed: ack.seed,
+          meta: ydoc.getMap('meta'),
+          peers,
+          close: () => { closed = true; cleanup(); },
+        });
+      } else {
+        // Reconnexion : on republie notre état complet (fusionné sans perte par Yjs, ou nouvelle initialisation)
+        socket.emit('wiki-collab:update', { pageId, update: Y.encodeStateAsUpdate(ydoc) });
+      }
+    });
+    socket.on('connect', join);
+    socket.on('connect_error', () => { if (!joined) { cleanup(); reject(new Error('Connexion temps réel impossible')); } });
+
+    function cleanup() {
+      try {
+        awarenessProtocol.removeAwarenessStates(awareness, [ydoc.clientID], 'local'); // diffusé par l'écouteur « update »
+        if (socket.connected) socket.emit('wiki-collab:leave', { pageId });
+      } catch { /* fermeture */ }
+      socket.disconnect();
+      awareness.destroy();
+      ydoc.destroy();
+    }
+  });
+}

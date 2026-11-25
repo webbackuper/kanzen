@@ -3,6 +3,7 @@ import { Trash2, Paperclip, Download } from 'lucide-react';
 import { api } from '../api';
 import { COLORS, initials } from './TaskCard';
 import { ErrorBox, Loading, Modal, input, btnPrimary, btnGhost, btnDanger } from '../ui';
+import { TaskWikiLinks } from './TaskWikiLinks';
 
 const fmtSize = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} Mo` : `${Math.ceil(n / 1024)} ko`);
 
@@ -137,6 +138,7 @@ export function TaskDetail({ taskId, workspaceId, onClose, onChanged }) {
             ))}
           </ul>
           {!ro && <input id="kz-file" type="file" onChange={upload} className="text-xs dark:text-gray-300" />}
+          <TaskWikiLinks taskId={taskId} workspaceId={workspaceId} />
           <p className="text-xs text-gray-500">Créée par {task.createdBy?.displayName ?? '—'} le {new Date(task.createdAt).toLocaleDateString('fr-FR')}</p>
         </aside>
       </div>
