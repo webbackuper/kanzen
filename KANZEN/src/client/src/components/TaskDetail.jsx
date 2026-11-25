@@ -14,17 +14,19 @@ export function TaskDetail({ taskId, workspaceId, onClose, onChanged }) {
   const [sub, setSub] = useState('');
   const [comment, setComment] = useState('');
 
-  const load = () => api.get(`/tasks/${taskId}`).then(({ task: t }) => {
+  // resetForm : uniquement au chargement et après enregistrement. Ajouter un commentaire ou une sous-tâche
+  // ne doit pas écraser une modification en cours du formulaire (titre, assignés…).
+  const load = ({ resetForm = false } = {}) => api.get(`/tasks/${taskId}`).then(({ task: t }) => {
     setTask(t);
-    setForm({ title: t.title, description: t.description, color: t.color, dueDate: t.dueDate?.slice(0, 10) ?? '', assigneeIds: t.assignees.map((u) => u.id) });
+    if (resetForm) setForm({ title: t.title, description: t.description, color: t.color, dueDate: t.dueDate?.slice(0, 10) ?? '', assigneeIds: t.assignees.map((u) => u.id) });
   }, setError);
-  useEffect(() => { load(); }, [taskId]); // load dépend uniquement de taskId
+  useEffect(() => { load({ resetForm: true }); }, [taskId]); // load dépend uniquement de taskId
 
   useEffect(() => {
     api.get(`/workspaces/${workspaceId}`).then((r) => setMembers(r.workspace.members)).catch(() => {});
   }, [workspaceId]);
 
-  const run = (fn) => async (e) => { e?.preventDefault?.(); try { setError(null); await fn(); await load(); onChanged(); } catch (x) { setError(x); } };
+  const run = (fn, opts) => async (e) => { e?.preventDefault?.(); try { setError(null); await fn(); await load(opts); onChanged(); } catch (x) { setError(x); } };
   if (!task || !form) return <Modal title="Tâche" onClose={onClose}>{error ? <ErrorBox error={error} /> : <Loading />}</Modal>;
   const ro = task.myRole === 'VIEWER';
 
@@ -32,7 +34,7 @@ export function TaskDetail({ taskId, workspaceId, onClose, onChanged }) {
     title: form.title, description: form.description, color: form.color,
     dueDate: form.dueDate ? new Date(`${form.dueDate}T12:00:00Z`).toISOString() : null,
     assigneeIds: form.assigneeIds,
-  }));
+  }), { resetForm: true });
   const del = async () => {
     if (!window.confirm('Supprimer cette tâche ?')) return;
     try { await api.del(`/tasks/${taskId}`); onChanged(); onClose(); } catch (x) { setError(x); }

@@ -57,10 +57,11 @@ try {
   await page.getByText('Tâche E2E').click();
   await page.getByPlaceholder('Ajouter une sous-tâche').fill('Vérifier');
   await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
-  await page.getByText('Vérifier').waitFor();
+  await page.locator('li span', { hasText: 'Vérifier' }).waitFor();
   await page.getByPlaceholder('Écrire un commentaire').fill('RAS');
   await page.getByRole('button', { name: 'Commenter' }).click();
-  await page.getByText('RAS').waitFor();
+  // Le commentaire publié (et non le texte encore présent dans la zone de saisie)
+  await page.locator('li p', { hasText: 'RAS' }).waitFor();
   // Affectation à plusieurs personnes
   const group = page.getByRole('group', { name: 'Assignés' });
   await group.getByRole('button', { name: /Alice Martin/ }).click();
