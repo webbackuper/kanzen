@@ -4,6 +4,11 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
+  // Garde-fou : ce seed PURGE toutes les tables. Interdit hors développement.
+  if (process.env.NODE_ENV === 'production' && process.env.KANZEN_ALLOW_SEED !== 'yes') {
+    console.error('Seed refusé en production (il efface toutes les données). Définir KANZEN_ALLOW_SEED=yes pour forcer.');
+    process.exit(1);
+  }
   console.log('🌱 Démarrage du Seed Multi-Tenant...');
 
   // Nettoyage (Ordre important pour Foreign Keys)
@@ -22,8 +27,7 @@ async function main() {
   
   const admin = await prisma.user.create({
     data: { 
-      email: 'admin@KanZen.io', name: 'Admin System', password, role: 'ADMIN',
-      notifySlack: true, slackWebhook: 'https://hooks.slack.com/services/XXX'
+      email: 'admin@KanZen.io', name: 'Admin System', password, role: 'ADMIN'
     }
   });
 
@@ -59,7 +63,7 @@ async function main() {
   });
 
   const colTodo = await prisma.column.create({ data: { title: 'To Do', order: 0, boardId: board.id } });
-  const colReview = await prisma.column.create({ data: { title: 'Review', order: 1, boardId: board.id } });
+  await prisma.column.create({ data: { title: 'Review', order: 1, boardId: board.id } });
 
   // Tâche nécessitant validation
   await prisma.task.create({

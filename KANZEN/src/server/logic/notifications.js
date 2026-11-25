@@ -4,7 +4,7 @@ async function sendSlack(webhookUrl, message) {
   // await fetch(webhookUrl, { method: 'POST', body: JSON.stringify({ text: message }) });
 }
 
-async function sendEmail(email, subject, body) {
+async function sendEmail(email, subject, _body) {
   console.log(`[EMAIL] Envoi vers ${email} | Sujet: ${subject}`);
 }
 

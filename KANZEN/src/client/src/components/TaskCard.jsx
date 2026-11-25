@@ -29,7 +29,7 @@ export function TaskCard({ task, token }) {
   const completedCount = subtasks.filter(s => s.completed).length;
   const progress = subtasks.length > 0 ? Math.round((completedCount / subtasks.length) * 100) : 0;
 
-  // Gestion rapide d'une sous-tâche (ex: clic pour toggle)
+  // eslint-disable-next-line no-unused-vars -- TODO : pas encore branché dans le rendu
   const handleToggleSubtask = async (e, subId) => {
     e.stopPropagation(); // Empêche le drag
     // Appel API optimiste

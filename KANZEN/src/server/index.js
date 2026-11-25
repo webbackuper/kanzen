@@ -20,9 +20,11 @@ const fastify = Fastify({ logger: true });
 
 // Sécurité
 fastify.register(fastifyCors, { origin: true });
-fastify.register(fastifyJwt, {
-  secret: process.env.JWT_SECRET || 'supersecret_fallback_key' 
-});
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  console.error('JWT_SECRET absent ou trop court (32 caractères minimum). Arrêt.');
+  process.exit(1);
+}
+fastify.register(fastifyJwt, { secret: process.env.JWT_SECRET });
 
 // Websockets (Temps Réel)
 fastify.register(fastifySocketIO, {
@@ -131,7 +133,7 @@ fastify.post('/api/subtasks/:id/toggle', { onRequest: [fastify.authenticate] }, 
 });
 
 // Upload
-fastify.post('/api/tasks/:taskId/attachments', { onRequest: [fastify.authenticate] }, async (req, reply) => {
+fastify.post('/api/tasks/:taskId/attachments', { onRequest: [fastify.authenticate] }, async (req) => {
   const data = await req.file();
   const attachment = await handleUpload(prisma, req.params.taskId, data);
   broadcastUpdate();
@@ -141,8 +143,9 @@ fastify.post('/api/tasks/:taskId/attachments', { onRequest: [fastify.authenticat
 // --- 4. Start ---
 const start = async () => {
   try {
-    await fastify.listen({ port: 3000, host: '0.0.0.0' });
-    console.log(`🚀 KanZen v2 running on port 3000`);
+    const port = Number(process.env.PORT) || 3000;
+    const host = process.env.HOST || '127.0.0.1';
+    await fastify.listen({ port, host });
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);

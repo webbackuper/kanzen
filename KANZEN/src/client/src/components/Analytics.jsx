@@ -12,7 +12,7 @@ export function Analytics({ token }) {
     })
     .then(res => res.json())
     // Transformation fictive pour l'exemple, à adapter selon le format réel de /api/stats
-    .then(rawEvents => {
+    .then(() => { // TODO : données factices, /api/stats n'existe pas encore
       // Pour cet exemple, on compte juste le nombre d'événements par type
       const processed = [
         { name: 'To Do', count: 12 },
@@ -22,7 +22,7 @@ export function Analytics({ token }) {
       setData(processed);
       setLoading(false);
     })
-    .catch(err => setLoading(false));
+    .catch(() => setLoading(false));
   }, [token]);
 
   const handleExport = () => {
@@ -35,7 +35,7 @@ export function Analytics({ token }) {
     <div className="p-8 max-w-6xl mx-auto">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Performance de l'équipe</h2>
+          <h2 className="text-2xl font-bold text-gray-900">Performance de l&apos;équipe</h2>
           <p className="text-gray-500">Flux de travail et vélocité</p>
         </div>
         <button 

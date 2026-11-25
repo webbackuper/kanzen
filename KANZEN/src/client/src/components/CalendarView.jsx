@@ -4,7 +4,7 @@ import { fr } from 'date-fns/locale';
 
 export function CalendarView({ token }) {
   const [tasks, setTasks] = useState([]);
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const [currentDate] = useState(new Date());
 
   useEffect(() => {
     // Récupération des tâches (on réutilise le endpoint board pour simplifier)

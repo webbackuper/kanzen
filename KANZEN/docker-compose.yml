@@ -1,36 +1,45 @@
-version: '3.8'
-
+# Option conteneur. Secrets dans un fichier .env à côté (voir .env.example).
 services:
-  KanZen:
-    build: .
-    container_name: KanZen_app
-    restart: always
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      - DATABASE_URL=file:/app/data/KanZen.db
-      - NODE_ENV=production
-      - JWT_SECRET=votre_super_secret_jwt_changez_moi
+      POSTGRES_DB: kanzen
+      POSTGRES_USER: kanzen
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD manquant}
     volumes:
-      - ./data:/app/data          # Persistance BDD
-      - ./backups:/app/backups    # Persistance Backups
-      - ./uploads:/app/uploads    # NOUVEAU : Persistance des fichiers
-    networks:
-      - KanZen_net
+      - pg_data:/var/lib/postgresql/data
+    networks: [kanzen_net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kanzen -d kanzen"]
+      interval: 10s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://kanzen:${POSTGRES_PASSWORD}@db:5432/kanzen?schema=public
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET manquant}
+    volumes:
+      - uploads:/app/uploads
+    networks: [kanzen_net]
 
   caddy:
-    image: caddy:latest
-    container_name: KanZen_proxy
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
-    networks:
-      - KanZen_net
+    networks: [kanzen_net]
 
 volumes:
+  pg_data:
+  uploads:
   caddy_data:
 
 networks:
-  KanZen_net:
+  kanzen_net:

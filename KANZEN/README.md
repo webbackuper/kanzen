@@ -17,7 +17,7 @@ Contrairement aux usines à gaz habituelles, KanZen se concentre sur l'essentiel
 
 * **Frontend** : React 18, TailwindCSS, @dnd-kit (Drag & Drop), Recharts.
 * **Backend** : Node.js 20, Fastify, Prisma ORM.
-* **Database** : SQLite (Mode WAL haute performance).
+* **Database** : PostgreSQL 16 (voir `docs/01-etat-des-lieux.md`).
 * **DevOps** : Docker Multi-stage build, Caddy (Reverse Proxy HTTPS).
 
 ## 🚀 Installation Rapide (Docker)
@@ -52,8 +52,8 @@ Au premier lancement, la base de données est peuplée avec ces utilisateurs :
 
 | Rôle | Email | Mot de passe | Accès |
 | :--- | :--- | :--- | :--- |
-| **Admin** | `admin@KanZen.io` | `admin123` | Full access, Analytics, Backups |
-| **User** | `user@KanZen.io` | `user123` | Gestion des tâches uniquement |
+| **Admin** | `admin@KanZen.io` | `password123` | Full access, Analytics, Backups |
+| **User** | `manager@KanZen.io` | `password123` | Gestion des tâches uniquement |
 
 > ⚠️ **Important** : Changez ces mots de passe immédiatement après la première connexion (ou supprimez `prisma/seed.js` avant le build).
 

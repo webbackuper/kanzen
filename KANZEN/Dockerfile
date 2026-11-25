@@ -1,29 +1,27 @@
-# --- Stage 1: Build Frontend ---
+# Option conteneur (le mode de déploiement principal est le bundle natif).
+
+# --- Stage 1 : build du frontend ---
 FROM node:20-alpine AS ui-builder
 WORKDIR /ui
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 COPY . .
-# On suppose que le script "build:ui" lance vite build dans src/client
 RUN npm run build:ui
 
-# --- Stage 2: Runtime Backend ---
+# --- Stage 2 : runtime ---
 FROM node:20-alpine
 WORKDIR /app
-RUN apk add --no-cache sqlite
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
 
 COPY package*.json ./
-RUN npm install --production
+RUN npm ci --omit=dev
 
-# Copier le backend
 COPY src/server ./src/server
 COPY prisma ./prisma
-
-# Copier le build frontend du stage 1 vers le dossier public du backend
 COPY --from=ui-builder /ui/dist ./public
+RUN npx prisma generate && mkdir -p uploads && chown -R node:node /app
 
-# Générer le client Prisma
-RUN npx prisma generate
-
+USER node
 EXPOSE 3000
-CMD ["sh", "-c", "npx prisma migrate deploy && npx prisma db seed && node src/server/index.js"]
+# Pas de seed ici : il purge la base à chaque démarrage.
+CMD ["sh", "-c", "npx prisma migrate deploy && node src/server/index.js"]
