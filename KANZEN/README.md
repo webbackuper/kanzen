@@ -1,89 +1,67 @@
-# ⚡ KanZen - Modern Open Source Kanban
+# KanZen
 
-**KanZen** est une solution de gestion de projet auto-hébergée, conçue selon des principes de performance absolue et de simplicité. Elle combine la fluidité d'une Single Page App moderne avec la robustesse d'un backend minimaliste.
+Kanban et gestion de projet **auto-hébergés, conçus pour un réseau fermé** (sans Internet), avec authentification Active Directory et comptes locaux. Un module Wiki est prévu (étape 4).
 
-![KanZen Screenshot](https://via.placeholder.com/800x400?text=Interface+KanZen+Preview)
+## Fonctionnalités
 
-## ✨ Pourquoi KanZen ?
+- Espaces de travail avec membres et rôles (Propriétaire, Éditeur, Lecteur), plusieurs tableaux par espace.
+- Tableaux Kanban : colonnes, limites WIP, glisser-déposer, mises à jour en temps réel.
+- Tâches : description, échéance, assigné, couleur, sous-tâches, commentaires, pièces jointes.
+- Agenda mensuel des échéances, statistiques par tableau, export CSV.
+- Administration : comptes locaux, verrouillage et déverrouillage, révocation des sessions, journal d'audit.
 
-Contrairement aux usines à gaz habituelles, KanZen se concentre sur l'essentiel :
-* **Performance** : Backend Fastify + Frontend React/Vite. Chargement instantané.
-* **Zéro Dépendance Lourde** : Pas de Redis, pas de Postgres obligatoire. Tout tient dans une image Docker avec SQLite.
-* **Sécurité RBAC** : Rôles Admin/User stricts intégrés au cœur de l'API.
-* **Automatisation** : Moteur de règles (Si Tâche X -> Alors Webhook Y) natif.
-* **Résilience** : Système de backup automatique avec rotation sur 7 jours.
+## Sécurité, en bref
 
-## 🛠 Stack Technique
+| Domaine | Mise en œuvre |
+|---|---|
+| Authentification | AD en **LDAPS** (compte de service, appartenance récursive aux groupes, bind utilisateur) **et/ou** comptes locaux en **argon2id** |
+| Sessions | Jeton opaque en cookie `HttpOnly; Secure; SameSite=Strict` (`__Host-`). Seul son SHA-256 est stocké en base. Expirations absolue et d'inactivité, révocables |
+| CSRF / CSWSH | En-tête `X-Requested-With` obligatoire, contrôle d'`Origin` sur l'API et la websocket |
+| Autorisation | Rôle vérifié dans l'espace pour chaque objet. Un non-membre reçoit 404 |
+| Entrées | JSON Schema strict (champs inconnus refusés), UUID validés |
+| Pièces jointes | Liste blanche MIME, taille limitée, nom de stockage aléatoire, téléchargement authentifié et forcé (`attachment`, `nosniff`, CSP `sandbox`) |
+| En-têtes | CSP stricte, HSTS, `frame-ancestors 'none'` (helmet) |
+| Anti-bruteforce | Rate limiting par IP, verrouillage temporaire des comptes locaux |
+| Traçabilité | Journal d'audit en base et en JSON sur stdout (journald / syslog / SIEM) |
+| Chaîne d'approvisionnement | `npm audit` bloquant en CI, SBOM CycloneDX, Prisma sans moteur binaire téléchargé |
 
-* **Frontend** : React 18, TailwindCSS, @dnd-kit (Drag & Drop), Recharts.
-* **Backend** : Node.js 20, Fastify, Prisma ORM.
-* **Database** : PostgreSQL 16 (voir `docs/01-etat-des-lieux.md`).
-* **DevOps** : Docker Multi-stage build, Caddy (Reverse Proxy HTTPS).
+## Prérequis
 
-## 🚀 Installation Rapide (Docker)
+- Node.js **22.18+** (24 LTS recommandé)
+- PostgreSQL **14+** (16 recommandé)
 
-C'est la méthode recommandée pour la production.
+## Développement
 
-1.  **Cloner le dépôt**
-    ```bash
-    git clone [https://github.com/votre-user/KanZen.git](https://github.com/votre-user/KanZen.git)
-    cd KanZen
-    ```
+```bash
+cd KANZEN
+cp .env.example .env    # puis adapter : NODE_ENV=development, DATABASE_URL…
+npm install             # génère aussi le client Prisma
+npx prisma migrate deploy
+npm run prisma:seed     # jeu de test : admin / alice / bob, mot de passe « KanZen-Dev-2026! »
+npm run dev             # API sur :3000, interface sur http://localhost:5173
+```
 
-2.  **Configurer l'environnement**
-    Copiez le fichier d'exemple et éditez le secret JWT.
-    ```bash
-    cp .env.example .env
-    nano .env
-    ```
+| Commande | Rôle |
+|---|---|
+| `npm run lint` | ESLint |
+| `npm test` | Tests unitaires et d'intégration. Nécessite `DATABASE_URL` ou `TEST_DATABASE_URL` vers une base **dédiée aux tests**, qui est purgée |
+| `npm run build` | Build de l'interface dans `dist/` |
+| `npm run test:e2e` | Test navigateur de bout en bout (base seedée, `dist/` buildé) |
+| `npm run admin:create -- <identifiant>` | Crée ou réinitialise un administrateur local de secours. Le mot de passe est lu sur stdin |
+| `npm run sbom` | SBOM CycloneDX des dépendances de production |
 
-3.  **Lancer la stack**
-    ```bash
-    docker-compose up -d --build
-    ```
-    *L'installation initiale prend environ 2 minutes (build du frontend + backend).*
+## Configuration
 
-4.  **Accéder à l'application**
-    Ouvrez `http://localhost` (ou votre domaine configuré dans Caddyfile).
+Tout se règle par variables d'environnement : voir [`.env.example`](.env.example). Chaque secret peut être lu depuis un fichier via `XXX_FILE`. L'authentification AD est détaillée dans [`docs/auth-ad.md`](../docs/auth-ad.md).
 
-## 🔐 Comptes par défaut
+## Exploitation
 
-Au premier lancement, la base de données est peuplée avec ces utilisateurs :
+- Sauvegarde : `scripts/backup.sh` (pg_dump et pièces jointes, chiffrement GPG optionnel, rotation).
+- Restauration : `scripts/restore.sh <archive>`.
+- Santé : `GET /api/health`.
 
-| Rôle | Email | Mot de passe | Accès |
-| :--- | :--- | :--- | :--- |
-| **Admin** | `admin@KanZen.io` | `password123` | Full access, Analytics, Backups |
-| **User** | `manager@KanZen.io` | `password123` | Gestion des tâches uniquement |
+Le déploiement offline (paquets RPM/DEB, systemd, reverse proxy, PKI) est l'objet de l'étape 3, et le plan de déploiement final celui de l'étape 4. Une option conteneur reste disponible (`Dockerfile`, `docker-compose.yml`).
 
-> ⚠️ **Important** : Changez ces mots de passe immédiatement après la première connexion (ou supprimez `prisma/seed.js` avant le build).
+## Licence
 
-## ⚙️ Fonctionnalités Avancées
-
-### Sauvegardes
-* **Automatique** : Tous les jours à 03:00 AM (fichiers conservés 7 jours dans `/backups`).
-* **Manuel** : Via le bouton "Sauvegarder la base" dans le dashboard Analytics (Admin).
-
-### Webhooks
-Pour connecter KanZen à Slack/Discord :
-1.  Connectez-vous en Admin.
-2.  Utilisez l'API (ou via DB direct pour l'instant) pour créer une `Rule` :
-    * `triggerId` : ID de la colonne "Done".
-    * `action` : `SEND_WEBHOOK`.
-    * `value` : `https://hooks.slack.com/...`.
-
-## 🧑‍💻 Développement Local
-
-Si vous souhaitez contribuer au code :
-
-1.  Installer les dépendances : `npm install`
-2.  Initialiser la DB : `npx prisma migrate dev`
-3.  Lancer le mode dev (Client + Serveur) :
-    ```bash
-    npm run dev
-    ```
-    * Frontend : `http://localhost:5173`
-    * Backend : `http://localhost:3000`
-
-## 📄 Licence
-
-Distribué sous licence MIT. Vous êtes libre de modifier et distribuer KanZen pour votre entreprise.
+MIT

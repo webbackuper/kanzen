@@ -42,6 +42,11 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - name: Tests E2E (Chromium)
+        run: |
+          npx playwright install --with-deps chromium
+          NODE_ENV=development node prisma/seed.js
+          npm run test:e2e
 
   security:
     runs-on: ubuntu-latest

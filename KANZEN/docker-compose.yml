@@ -22,9 +22,11 @@ services:
       db: { condition: service_healthy }
     environment:
       DATABASE_URL: postgresql://kanzen:${POSTGRES_PASSWORD}@db:5432/kanzen?schema=public
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET manquant}
+      PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL manquant}
+      TRUST_PROXY: 172.16.0.0/12
+    env_file: [.env]
     volumes:
-      - uploads:/app/uploads
+      - uploads:/var/lib/kanzen/uploads
     networks: [kanzen_net]
 
   caddy:

@@ -9,7 +9,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:3000' // Proxy pour le dev local
+      '/api': 'http://localhost:3000', // Proxy pour le dev local
+      '/socket.io': { target: 'http://localhost:3000', ws: true },
     }
   }
 });

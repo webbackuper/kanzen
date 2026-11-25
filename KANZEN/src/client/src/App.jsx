@@ -1,109 +1,104 @@
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
+import { LayoutDashboard, Calendar, LogOut, Moon, Sun, Users, ScrollText, UserCog } from 'lucide-react';
+import { api, setUnauthorizedHandler } from './api';
+import { Login, ChangePassword } from './components/Login';
+import { Workspaces, WorkspacePage } from './components/Workspaces';
 import { KanbanBoard } from './components/KanbanBoard';
-import { Analytics } from './components/Analytics';
-import { CalendarView } from './components/CalendarView'; // NOUVEAU
-import { Login } from './components/Login';
-import { LayoutDashboard, BarChart3, Calendar, LogOut, Moon, Sun } from 'lucide-react';
+import { BoardStats } from './components/BoardStats';
+import { CalendarView } from './components/CalendarView';
+import { AdminUsers, AdminAudit } from './components/Admin';
+import { Loading, card } from './ui';
 
 function NavBar({ user, onLogout, toggleTheme, isDark }) {
-  const location = useLocation();
-  const linkClass = (path) => 
-    `flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${location.pathname === path 
-      ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-400' 
-      : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100'}`;
-
+  const link = ({ isActive }) => `flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${isActive
+    ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-400'
+    : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100'}`;
   return (
-    <nav className="h-16 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between px-6 shrink-0 transition-colors">
-      <div className="flex items-center gap-2">
+    <nav className="h-14 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between px-4 shrink-0">
+      <NavLink to="/" className="flex items-center gap-2">
         <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold">Z</div>
-        <h1 className="text-xl font-bold tracking-tight text-gray-800 dark:text-white">KanZen</h1>
+        <span className="text-lg font-bold text-gray-800 dark:text-white hidden sm:inline">KanZen</span>
+      </NavLink>
+      <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-lg gap-1">
+        <NavLink to="/" end className={link}><LayoutDashboard size={16} /> <span className="hidden md:inline">Espaces</span></NavLink>
+        <NavLink to="/calendar" className={link}><Calendar size={16} /> <span className="hidden md:inline">Agenda</span></NavLink>
+        {user.role === 'ADMIN' && <>
+          <NavLink to="/admin/users" className={link}><Users size={16} /> <span className="hidden md:inline">Comptes</span></NavLink>
+          <NavLink to="/admin/audit" className={link}><ScrollText size={16} /> <span className="hidden md:inline">Audit</span></NavLink>
+        </>}
       </div>
-
-      <div className="flex items-center gap-6">
-        <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-lg">
-          <Link to="/" className={linkClass('/')}>
-            <LayoutDashboard size={16} /> Board
-          </Link>
-          <Link to="/calendar" className={linkClass('/calendar')}>
-            <Calendar size={16} /> Agenda
-          </Link>
-          {user.role === 'ADMIN' && (
-            <Link to="/analytics" className={linkClass('/analytics')}>
-              <BarChart3 size={16} /> Analytics
-            </Link>
-          )}
-        </div>
-
-        <div className="flex items-center gap-4 pl-6 border-l dark:border-slate-700">
-          <button onClick={toggleTheme} className="text-gray-400 hover:text-yellow-500 transition-colors">
-            {isDark ? <Sun size={20} /> : <Moon size={20} />}
-          </button>
-          
-          <div className="text-right hidden sm:block">
-            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{user.name}</p>
-            <p className="text-xs text-gray-500">{user.role}</p>
-          </div>
-          <button onClick={onLogout} className="text-gray-400 hover:text-red-600 transition-colors">
-            <LogOut size={20} />
-          </button>
-        </div>
+      <div className="flex items-center gap-3">
+        <button onClick={toggleTheme} className="text-gray-400 hover:text-yellow-500" aria-label="Changer de thème">{isDark ? <Sun size={18} /> : <Moon size={18} />}</button>
+        <NavLink to="/account" className="text-right hidden sm:block" title="Mon compte">
+          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{user.displayName}</p>
+          <p className="text-xs text-gray-500">{user.authSource === 'LDAP' ? 'Compte AD' : 'Compte local'}{user.role === 'ADMIN' ? ' · admin' : ''}</p>
+        </NavLink>
+        <NavLink to="/account" className="sm:hidden text-gray-400" aria-label="Mon compte"><UserCog size={18} /></NavLink>
+        <button onClick={onLogout} className="text-gray-400 hover:text-red-600" aria-label="Se déconnecter"><LogOut size={18} /></button>
       </div>
     </nav>
   );
 }
 
+function Account({ user, onChanged }) {
+  return (
+    <div className="p-6 max-w-2xl mx-auto">
+      <div className={`${card} p-6`}>
+        <h2 className="text-xl font-semibold mb-1 text-gray-900 dark:text-white">Mon compte</h2>
+        <p className="text-sm text-gray-500 mb-6">{user.username} · {user.authSource === 'LDAP' ? 'Active Directory' : 'compte local'}</p>
+        {user.authSource === 'LOCAL'
+          ? <ChangePassword onDone={onChanged} />
+          : <p className="text-sm text-gray-600 dark:text-gray-300">Votre mot de passe est géré par l&apos;annuaire Active Directory (Ctrl+Alt+Suppr sous Windows).</p>}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
-  const [user, setUser] = useState(null);
-  const [isDark, setIsDark] = useState(false);
+  const [user, setUser] = useState(undefined); // undefined = chargement, null = déconnecté
+  const [isDark, setIsDark] = useState(() => {
+    try { return localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches); } catch { return false; }
+  });
 
+  const refresh = useCallback(() => api.get('/auth/me').then((r) => setUser(r.user), () => setUser(null)), []);
+  useEffect(() => { setUnauthorizedHandler(() => setUser(null)); refresh(); }, [refresh]);
   useEffect(() => {
-    const token = localStorage.getItem('KanZen_token');
-    const storedUser = localStorage.getItem('KanZen_user');
-    if (token && storedUser) setUser(JSON.parse(storedUser));
-    
-    // Check Dark Mode Pref
-    if (localStorage.getItem('theme') === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      setIsDark(true);
-      document.documentElement.classList.add('dark');
-    }
-  }, []);
+    document.documentElement.classList.toggle('dark', isDark);
+    try { localStorage.setItem('theme', isDark ? 'dark' : 'light'); } catch { /* stockage indisponible */ }
+  }, [isDark]);
 
-  const toggleTheme = () => {
-    if (isDark) {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-      setIsDark(false);
-    } else {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-      setIsDark(true);
-    }
-  };
+  const logout = async () => { await api.post('/auth/logout').catch(() => {}); setUser(null); };
 
-  const handleLogin = (userData, token) => {
-    localStorage.setItem('KanZen_token', token);
-    localStorage.setItem('KanZen_user', JSON.stringify(userData));
-    setUser(userData);
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('KanZen_token');
-    localStorage.removeItem('KanZen_user');
-    setUser(null);
-  };
-
-  if (!user) return <Login onLogin={handleLogin} />;
+  if (user === undefined) return <Loading />;
+  if (!user) return <Login onLogin={setUser} />;
+  if (user.mustChangePassword) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
+        <div className={`${card} p-8`}>
+          <h1 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">Nouveau mot de passe</h1>
+          <ChangePassword forced onDone={refresh} />
+          <button onClick={logout} className="mt-4 text-sm text-gray-500 hover:underline">Se déconnecter</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <BrowserRouter>
-      <div className="flex flex-col h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors">
-        <NavBar user={user} onLogout={handleLogout} toggleTheme={toggleTheme} isDark={isDark} />
-        <main className="flex-1 overflow-hidden relative">
+      <div className="flex flex-col h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
+        <NavBar user={user} onLogout={logout} toggleTheme={() => setIsDark(!isDark)} isDark={isDark} />
+        <main className="flex-1 overflow-auto relative">
           <Routes>
-            <Route path="/" element={<KanbanBoard token={localStorage.getItem('KanZen_token')} />} />
-            <Route path="/calendar" element={<CalendarView token={localStorage.getItem('KanZen_token')} />} />
-            <Route path="/analytics" element={<Analytics token={localStorage.getItem('KanZen_token')} />} />
+            <Route path="/" element={<Workspaces user={user} />} />
+            <Route path="/w/:id" element={<WorkspacePage user={user} />} />
+            <Route path="/b/:id" element={<KanbanBoard user={user} />} />
+            <Route path="/b/:id/stats" element={<BoardStats />} />
+            <Route path="/calendar" element={<CalendarView />} />
+            <Route path="/account" element={<Account user={user} onChanged={refresh} />} />
+            {user.role === 'ADMIN' && <Route path="/admin/users" element={<AdminUsers user={user} />} />}
+            {user.role === 'ADMIN' && <Route path="/admin/audit" element={<AdminAudit />} />}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>

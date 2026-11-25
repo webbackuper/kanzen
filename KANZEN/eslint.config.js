@@ -7,7 +7,7 @@ export default [
   js.configs.recommended,
   { rules: { 'no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }] } },
   {
-    files: ['src/server/**/*.js', 'prisma/**/*.js', 'test/**/*.js', 'scripts/**/*.js', '*.config.js'],
+    files: ['src/server/**/*.js', 'prisma/**/*.js', 'test/**/*.{js,mjs}', 'scripts/**/*.js', '*.config.js'],
     languageOptions: { globals: globals.node },
   },
   {
