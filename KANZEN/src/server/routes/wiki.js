@@ -252,6 +252,9 @@ export default async function wikiRoutes(app) {
   /** Enregistrement automatique quand le dernier co-éditeur part sans enregistrer (voir wikiCollab.js). */
   async function autosave(pageId, { content, title, icon }, user) {
     if (!user) return;
+    // Auteur relu en base : un compte désactivé entre-temps (départ, révocation) n'enregistre plus rien
+    user = await prisma.user.findUnique({ where: { id: user.id } });
+    if (!user || user.disabled) return;
     const current = await prisma.wikiPage.findUnique({ where: { id: pageId } });
     if (!current || current.deletedAt) return;
     try { await checkPage(user, pageId, 'EDITOR'); } catch { return; } // droits retirés entre-temps

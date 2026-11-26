@@ -1,5 +1,6 @@
 import { dummyVerify, verifyPassword, hashPassword, checkPasswordPolicy } from '../lib/passwords.js';
 import { badRequest, unauthorized } from '../lib/errors.js';
+import { resolveDirectoryAccount } from '../lib/adsync.js';
 
 export const publicUser = (u) => ({
   id: u.id, username: u.username, displayName: u.displayName, email: u.email,
@@ -9,7 +10,7 @@ export const publicUser = (u) => ({
 const GENERIC_FAIL = 'Identifiant ou mot de passe incorrect';
 
 export default async function authRoutes(app) {
-  const { prisma, cfg, sessions, audit, ldap } = app;
+  const { prisma, cfg, sessions, audit, ldap, realtime } = app;
 
   app.get('/auth/config', async () => ({ local: cfg.auth.localEnabled, ldap: cfg.auth.ldapEnabled }));
 
@@ -53,13 +54,14 @@ export default async function authRoutes(app) {
       if (!cfg.auth.ldapEnabled || !ldap) return fail('ldap_disabled', user);
       const r = await ldap.authenticate(username, password);
       if (!r.ok) {
-        if (r.reason === 'not_in_group' && user) await sessions.destroyAllForUser(user.id); // retrait du groupe = perte d'accès
+        if (r.reason === 'not_in_group' && user) { await sessions.destroyAllForUser(user.id); realtime.disconnectUser(user.id); } // retrait du groupe = perte d'accès
         return fail(r.reason, user);
       }
       const p = r.profile;
       const data = { username: p.username, displayName: p.displayName, email: p.email, role: p.isAdmin ? 'ADMIN' : 'USER' };
-      const existing = await prisma.user.findFirst({ where: { OR: [{ externalId: p.externalId }, { username: p.username }] } });
-      if (existing && existing.authSource !== 'LDAP') return fail('username_conflict', existing); // pas d'usurpation d'un compte local
+      const match = await resolveDirectoryAccount({ prisma, audit }, req, p);
+      if (match.conflict) return fail(match.reason, match.conflict); // pas d'usurpation d'un compte local ni d'un autre agent
+      const existing = match.user;
       // Désactivé par la synchronisation AD et de retour dans le groupe : réactivation ; désactivé par un admin : refus
       if (existing?.disabled && existing.disabledReason !== 'AD_SYNC') return fail('disabled', existing);
       if (existing?.disabled) { data.disabled = false; data.disabledReason = null; await audit(req, 'user.reprovision', { target: existing.username, actor: existing, details: { source: 'LOGIN' } }); }

@@ -9,7 +9,7 @@ const idParam = { type: 'object', properties: { id: { type: 'string', format: 'u
 const adminView = (u) => ({ ...publicUser(u), disabled: u.disabled, disabledReason: u.disabledReason, lastLoginAt: u.lastLoginAt, createdAt: u.createdAt, lockedUntil: u.lockedUntil });
 
 export default async function userRoutes(app) {
-  const { prisma, audit, sessions, cfg, ldap } = app;
+  const { prisma, audit, sessions, cfg, ldap, realtime } = app;
 
   // Recherche d'utilisateurs (ajout de membres, assignation) : champs minimaux, tout utilisateur connecté
   app.get('/users/lookup', {
@@ -118,7 +118,7 @@ export default async function userRoutes(app) {
     // Décision d'un administrateur : prévaut sur la synchronisation AD (plus de réactivation automatique)
     const data = { ...rest, ...(rest.disabled !== undefined ? { disabledReason: null } : {}), ...(unlock ? { lockedUntil: null, failedLogins: 0 } : {}) };
     const user = await prisma.user.update({ where: { id: target.id }, data });
-    if (rest.disabled) await sessions.destroyAllForUser(user.id);
+    if (rest.disabled) { await sessions.destroyAllForUser(user.id); realtime.disconnectUser(user.id); }
     await audit(req, 'user.update', { target: user.username, details: req.body });
     return { user: adminView(user) };
   });
@@ -134,12 +134,14 @@ export default async function userRoutes(app) {
     if (problems.length) throw badRequest(`Mot de passe refusé : ${problems.join(', ')}`);
     await prisma.user.update({ where: { id: target.id }, data: { passwordHash: await hashPassword(req.body.password), mustChangePassword: true, failedLogins: 0, lockedUntil: null } });
     await sessions.destroyAllForUser(target.id);
+    realtime.disconnectUser(target.id);
     await audit(req, 'user.reset_password', { target: target.username });
     return { ok: true };
   });
 
   app.delete('/users/:id/sessions', { onRequest: [app.requireAdmin], schema: { params: idParam } }, async (req) => {
     const { count } = await sessions.destroyAllForUser(req.params.id);
+    realtime.disconnectUser(req.params.id);
     await audit(req, 'user.revoke_sessions', { target: req.params.id, details: { count } });
     return { revoked: count };
   });

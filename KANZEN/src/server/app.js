@@ -165,6 +165,7 @@ export async function buildApp({ cfg, prisma, ldap, logger } = {}) {
 
   // Les websockets maintiennent le serveur HTTP ouvert : on les ferme AVANT l'arrêt de Fastify
   app.addHook('preClose', async () => {
+    realtime.stop();
     realtime.io.disconnectSockets(true);
     await new Promise((resolve) => realtime.io.close(() => resolve()));
   });

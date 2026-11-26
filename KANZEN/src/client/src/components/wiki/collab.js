@@ -66,6 +66,9 @@ export function openCollab(pageId, user, { onPeers, onReset } = {}) {
         socket.emit('wiki-collab:update', { pageId, update: Y.encodeStateAsUpdate(ydoc) });
       }
     });
+    // Déconnexion par le serveur (revalidation des droits, révocation) : une seule tentative de reconnexion ;
+    // elle échoue si la session n'est plus valide, et le salon n'est pas rejoint si l'accès a été retiré.
+    socket.on('disconnect', (reason) => { if (reason === 'io server disconnect') setTimeout(() => { if (!closed) socket.connect(); }, 3000); });
     socket.on('connect', join);
     socket.on('connect_error', () => { if (!joined) { cleanup(); reject(new Error('Connexion temps réel impossible')); } });
 

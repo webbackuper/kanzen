@@ -87,6 +87,7 @@ export function KanbanBoard({ user }) {
     const socket = io({ path: '/socket.io', withCredentials: true });
     let timer = null;
     let connectedOnce = false;
+    let stopped = false;
     // Rafale de modifications (réunion, déplacements successifs) : un seul rechargement après 250 ms de calme
     const reloadSoon = () => { clearTimeout(timer); timer = setTimeout(load, 250); };
     socket.on('connect', () => {
@@ -96,13 +97,16 @@ export function KanbanBoard({ user }) {
       if (connectedOnce) reloadSoon();
       connectedOnce = true;
     });
+    // Déconnexion par le serveur (revalidation des droits, révocation) : une seule tentative de reconnexion ;
+    // elle échoue si la session n'est plus valide, et le salon n'est pas rejoint si l'accès a été retiré.
+    socket.on('disconnect', (reason) => { if (reason === 'io server disconnect') setTimeout(() => { if (!stopped) socket.connect(); }, 3000); });
     socket.on('board:updated', (e) => {
       if (e.boardId !== id) return;
       // Écho de notre propre déplacement : déjà appliqué localement (mise à jour optimiste)
       if (e.reason === 'move' && e.origin && e.origin === socket.id) return;
       reloadSoon();
     });
-    return () => { clearTimeout(timer); setSocketId(null); socket.disconnect(); };
+    return () => { stopped = true; clearTimeout(timer); setSocketId(null); socket.disconnect(); };
   }, [id, load]);
 
   // Suppression de colonne en attente : exécutée si on quitte la page avant la fin du délai d'annulation

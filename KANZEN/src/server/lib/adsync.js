@@ -7,7 +7,7 @@
 // synchronisation désactiverait plus de la moitié des comptes AD actifs (erreur de groupe ou de base DN probable),
 // sauf « force ».
 
-export async function syncDirectory({ prisma, ldap, audit, log, force = false }) {
+export async function syncDirectory({ prisma, ldap, audit, log, force = false, onRevoke = null }) {
   const report = { checked: 0, disabled: [], reenabled: [], updated: 0, aborted: null };
   let authorized;
   try {
@@ -34,6 +34,7 @@ export async function syncDirectory({ prisma, ldap, audit, log, force = false })
       if (u.disabled) continue;
       await prisma.user.update({ where: { id: u.id }, data: { disabled: true, disabledReason: 'AD_SYNC' } });
       const { count } = await prisma.session.deleteMany({ where: { userId: u.id } });
+      onRevoke?.(u.id); // websockets ouvertes fermées immédiatement (même processus)
       report.disabled.push(u.username);
       await audit(null, 'user.deprovision', { target: u.username, details: { source: 'AD_SYNC', sessionsRevoked: count } });
       continue;
@@ -55,11 +56,36 @@ export async function syncDirectory({ prisma, ldap, audit, log, force = false })
   return report;
 }
 
+/**
+ * Compte KanZen correspondant à un profil AD. L'identité de référence est l'objectGUID, jamais le seul identifiant :
+ * un sAMAccountName réattribué à un nouvel agent (homonyme, recréation du compte) ne doit pas hériter des espaces,
+ * pages et affectations de l'ancien titulaire.
+ * - même objectGUID : c'est le compte (renommage AD compris) ;
+ * - même identifiant, objectGUID différent, ancien compte désactivé (départ) : l'identifiant de l'ancien compte est
+ *   libéré (renommé « identifiant~xxxxxxxx », historique conservé) et un nouveau compte sera créé ;
+ * - même identifiant, objectGUID différent, ancien compte actif : refus (arbitrage d'un administrateur) ;
+ * - compte local du même nom : refus.
+ * @returns {Promise<{user: object|null} | {conflict: object, reason: string}>}
+ */
+export async function resolveDirectoryAccount({ prisma, audit }, req, p) {
+  const byGuid = await prisma.user.findFirst({ where: { externalId: p.externalId, authSource: 'LDAP' } });
+  const byName = await prisma.user.findUnique({ where: { username: p.username } });
+  if (byName && byName.id !== byGuid?.id) {
+    if (byName.authSource !== 'LDAP') return { conflict: byName, reason: 'username_conflict' };
+    if (!byName.disabled) return { conflict: byName, reason: 'identity_mismatch' };
+    const released = `${byName.username}~${byName.id.slice(0, 8)}`;
+    await prisma.user.update({ where: { id: byName.id }, data: { username: released } });
+    await audit(req, 'user.username_released', { target: released, details: { username: p.username, reason: 'objectGUID différent', newExternalId: p.externalId } });
+  }
+  return { user: byGuid };
+}
+
 /** Création (ou mise à jour) d'un compte KanZen à partir d'un profil AD. Refuse d'écraser un compte local. */
 export async function provisionFromDirectory({ prisma, audit }, req, p) {
   const data = { username: p.username, displayName: p.displayName, email: p.email, role: p.isAdmin ? 'ADMIN' : 'USER' };
-  const existing = await prisma.user.findFirst({ where: { OR: [{ externalId: p.externalId }, { username: p.username }] } });
-  if (existing && existing.authSource !== 'LDAP') return { conflict: existing };
+  const match = await resolveDirectoryAccount({ prisma, audit }, req, p);
+  if (match.conflict) return { conflict: match.conflict };
+  const existing = match.user;
   if (existing) return { user: existing };
   const user = await prisma.user.create({ data: { ...data, authSource: 'LDAP', externalId: p.externalId } });
   await audit(req, 'user.provision', { target: user.username, details: { source: 'LDAP', by: req?.user?.username ?? null } });

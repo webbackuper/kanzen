@@ -189,6 +189,40 @@ describe('authentification AD (annuaire simulé)', () => {
     } finally { for (const [k, v] of Object.entries(saved)) directory[k].inGroup = v; }
   });
 
+  it('un identifiant AD réattribué (autre objectGUID) n\'hérite pas de l\'ancien compte', async () => {
+    // Ancien titulaire de « jdupont », parti : son compte KanZen est désactivé mais garde ses données
+    const old = await prisma.user.create({ data: { username: 'jdupont', displayName: 'Ancien', authSource: 'LDAP', externalId: '99999999-9999-9999-9999-999999999999', disabled: false } });
+    // Ancien compte encore actif : refus (arbitrage administrateur), aucune session ouverte
+    expect((await client(app).login('jdupont', 'AD-Password-1')).statusCode).toBe(401);
+    expect(await prisma.session.count({ where: { userId: old.id } })).toBe(0);
+    // Ancien compte désactivé : identifiant libéré, nouveau compte distinct
+    await prisma.user.update({ where: { id: old.id }, data: { disabled: true, disabledReason: 'AD_SYNC' } });
+    const r = await client(app).login('jdupont', 'AD-Password-1');
+    expect(r.statusCode).toBe(200);
+    expect(r.json().user.id).not.toBe(old.id);
+    const kept = await prisma.user.findUnique({ where: { id: old.id } });
+    expect(kept).toMatchObject({ disabled: true, externalId: '99999999-9999-9999-9999-999999999999' });
+    expect(kept.username).toMatch(/^jdupont~/);
+    expect(await prisma.auditLog.count({ where: { action: 'user.username_released' } })).toBe(1);
+  });
+
+  it('synchronisation AD : un départ ferme aussi les websockets ouvertes', async () => {
+    const { io } = await import('socket.io-client');
+    const { syncDirectory } = await import('../src/server/lib/adsync.js');
+    const address = await app.listen({ host: '127.0.0.1', port: 0 });
+    const login = await fetch(`${address}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'KanZen' }, body: JSON.stringify({ username: 'jdupont', password: 'AD-Password-1' }) });
+    await client(app).login('chef', 'AD-Password-2');
+    const cookie = login.headers.get('set-cookie').split(';')[0];
+    const socket = io(address, { extraHeaders: { cookie }, transports: ['websocket'], reconnection: false });
+    await new Promise((resolve, reject) => { socket.on('connect', resolve); socket.on('connect_error', reject); });
+    const closed = new Promise((resolve) => socket.on('disconnect', resolve));
+    directory.jdupont.inGroup = false;
+    try {
+      await syncDirectory({ prisma, ldap, audit: app.audit, log: { info() {}, warn() {}, error() {} }, onRevoke: app.realtime.disconnectUser });
+      expect(await closed).toBe('io server disconnect');
+    } finally { directory.jdupont.inGroup = true; socket.close(); }
+  });
+
   it('les comptes locaux et AD coexistent', async () => {
     await createUser(prisma, 'secours', { role: 'ADMIN' });
     expect((await client(app).login('secours')).statusCode).toBe(200);
@@ -423,6 +457,48 @@ describe('arrêt du serveur', () => {
     expect(Date.now() - t0).toBeLessThan(2000);
     socket.close();
     await ctx.prisma.$disconnect();
+  });
+});
+
+describe('temps réel : revalidation des websockets', () => {
+  it('déconnecte une websocket dont la session est révoquée ou dont l\'accès au tableau est retiré', async () => {
+    const { io } = await import('socket.io-client');
+    const ctx = await setup();
+    await createUser(ctx.prisma, 'owner');
+    const bob = await createUser(ctx.prisma, 'bob');
+    const o = client(ctx.app); await o.login('owner');
+    const ws = (await o.post('/api/workspaces', { name: 'Projet' })).json().workspace;
+    await o.put(`/api/workspaces/${ws.id}/members/${bob.id}`, { role: 'VIEWER' });
+    const board = (await o.post(`/api/workspaces/${ws.id}/boards`, { title: 'T' })).json().board;
+    const address = await ctx.app.listen({ host: '127.0.0.1', port: 0 });
+    const connect = async () => {
+      const login = await fetch(`${address}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'KanZen' }, body: JSON.stringify({ username: 'bob', password: PASSWORD }) });
+      const socket = io(address, { extraHeaders: { cookie: login.headers.get('set-cookie').split(';')[0] }, transports: ['websocket'], reconnection: false });
+      await new Promise((resolve, reject) => { socket.on('connect', resolve); socket.on('connect_error', reject); });
+      expect((await socket.emitWithAck('board:join', board.id)).ok).toBe(true);
+      return socket;
+    };
+    try {
+      // Toujours autorisé : la revalidation ne coupe rien
+      const s1 = await connect();
+      await ctx.app.realtime.sweep();
+      expect(s1.connected).toBe(true);
+      // Retrait de l'espace : coupure au passage suivant
+      await o.del(`/api/workspaces/${ws.id}/members/${bob.id}`);
+      const gone = new Promise((resolve) => s1.on('disconnect', resolve));
+      await ctx.app.realtime.sweep();
+      expect(await gone).toBe('io server disconnect');
+      // Sessions révoquées : coupure au passage suivant
+      await o.put(`/api/workspaces/${ws.id}/members/${bob.id}`, { role: 'VIEWER' });
+      const s2 = await connect();
+      await ctx.prisma.session.deleteMany({ where: { userId: bob.id } });
+      const gone2 = new Promise((resolve) => s2.on('disconnect', resolve));
+      await ctx.app.realtime.sweep();
+      expect(await gone2).toBe('io server disconnect');
+    } finally {
+      await ctx.app.close();
+      await ctx.prisma.$disconnect();
+    }
   });
 });
 
