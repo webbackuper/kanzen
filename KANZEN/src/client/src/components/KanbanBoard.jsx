@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { DndContext, closestCorners, useSensor, useSensors, PointerSensor, KeyboardSensor } from '@dnd-kit/core';
-import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+import { SortableContext, horizontalListSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { io } from 'socket.io-client';
 import { isPast } from 'date-fns';
-import { BarChart3, Download, Filter, Keyboard, Plus, X } from 'lucide-react';
+import { Archive, BarChart3, Download, Filter, Keyboard, Plus, Tag, X } from 'lucide-react';
 import { Column } from './Column';
 import { TaskDetail } from './TaskDetail';
+import { ArchivedModal, LabelsModal } from './BoardPanels';
+import { PRIORITIES } from './boardMeta';
 import { api, setSocketId } from '../api';
 import { ErrorBox, Loading, Modal, Toast, btnGhost, btnPrimary, input, isTyping } from '../ui';
 
@@ -14,7 +16,8 @@ const UNDO_MS = 8000;
 const COLOR_LABEL = { white: 'Blanc', red: 'Rouge', orange: 'Orange', yellow: 'Jaune', green: 'Vert', blue: 'Bleu', purple: 'Violet', gray: 'Gris' };
 
 // Annonces en français pour les lecteurs d'écran pendant un déplacement au clavier ou à la souris
-const titleOf = (board, id) => board?.columns.flatMap((c) => c.tasks).find((t) => t.id === id)?.title ?? 'la carte';
+const titleOf = (board, id) => board?.columns.flatMap((c) => c.tasks).find((t) => t.id === id)?.title
+  ?? board?.columns.find((c) => c.id === id)?.title ?? 'la carte';
 const colOf = (board, over) => {
   if (!over) return null;
   const id = over.data.current?.type === 'task' ? over.data.current.columnId : over.id;
@@ -31,19 +34,22 @@ export function KanbanBoard({ user }) {
   const [pendingDelete, setPendingDelete] = useState(null); // { column, timer } : suppression annulable
   const [help, setHelp] = useState(false);
   const [addSignal, setAddSignal] = useState(0);
+  const [panel, setPanel] = useState(null); // 'labels' | 'archived'
   const filterRef = useRef(null);
   const pendingRef = useRef(null);
   pendingRef.current = pendingDelete;
 
-  // Filtres, conservés dans l'URL (lien partageable) : q, who (me | id), late, color
+  // Filtres, conservés dans l'URL (lien partageable) : q, who (me | id), late, color, label, prio
   // Texte : état local (saisie fluide), recopié dans l'adresse après 300 ms sans frappe
   const [q, setQ] = useState(() => params.get('q') ?? '');
   const who = params.get('who') ?? '';
   const lateOnly = params.get('late') === '1';
   const color = params.get('color') ?? '';
+  const labelF = params.get('label') ?? '';
+  const prio = params.get('prio') ?? '';
   const setFilter = (k, v) => setParams((p) => { const n = new URLSearchParams(p); if (v) n.set(k, v); else n.delete(k); return n; }, { replace: true });
-  const clearFilters = () => setQ('') || setParams((p) => { const n = new URLSearchParams(p); ['q', 'who', 'late', 'color'].forEach((k) => n.delete(k)); return n; }, { replace: true });
-  const filtering = !!(q || who || lateOnly || color);
+  const clearFilters = () => setQ('') || setParams((p) => { const n = new URLSearchParams(p); ['q', 'who', 'late', 'color', 'label', 'prio'].forEach((k) => n.delete(k)); return n; }, { replace: true });
+  const filtering = !!(q || who || lateOnly || color || labelF || prio);
   useEffect(() => {
     const t = setTimeout(() => { if ((params.get('q') ?? '') !== q) setFilter('q', q); }, 300);
     return () => clearTimeout(t);
@@ -103,13 +109,33 @@ export function KanbanBoard({ user }) {
     const keep = (t) => (!term || t.title.toLowerCase().includes(term) || t.description?.toLowerCase().includes(term))
       && (!who || (who === 'none' ? !t.assignees.length : t.assignees.some((a) => a.id === (who === 'me' ? user?.id : who))))
       && (!lateOnly || (t.dueDate && isPast(new Date(t.dueDate))))
-      && (!color || t.color === color);
+      && (!color || t.color === color)
+      && (!labelF || (t.labelIds ?? []).includes(labelF))
+      && (!prio || t.priority === prio);
     const visible = board.columns.filter((c) => c.id !== pendingDelete?.column.id);
     return visible.map((c, i) => ({
       ...c, total: c.tasks.length, isLast: i === visible.length - 1,
       tasks: filtering ? c.tasks.filter((t) => keep(t) && !(lateOnly && i === visible.length - 1)) : c.tasks,
     }));
-  }, [board, q, who, lateOnly, color, filtering, pendingDelete, user?.id]);
+  }, [board, q, who, lateOnly, color, labelF, prio, filtering, pendingDelete, user?.id]);
+
+  const labelsById = useMemo(() => new Map((board?.labels ?? []).map((l) => [l.id, l])), [board?.labels]);
+
+  // Réordonnancement des colonnes : nouvelle position entre les voisines
+  const moveColumn = async (activeId, overId) => {
+    const cols = board.columns;
+    const from = cols.findIndex((c) => c.id === activeId);
+    const to = cols.findIndex((c) => c.id === overId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = [...cols];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    const before = next[to - 1]?.position;
+    const after = next[to + 1]?.position;
+    const position = before !== undefined && after !== undefined ? (before + after) / 2 : before !== undefined ? before + 1000 : after - 1000;
+    setBoard({ ...board, columns: next.map((c) => (c.id === activeId ? { ...c, position } : c)) });
+    try { await api.patch(`/columns/${activeId}`, { position }); } catch (x) { setError(x); load(); }
+  };
 
   const members = useMemo(() => {
     const m = new Map();
@@ -120,17 +146,20 @@ export function KanbanBoard({ user }) {
   // Raccourcis : / filtre, n nouvelle carte, ? aide
   useEffect(() => {
     const k = (e) => {
-      if (e.ctrlKey || e.metaKey || e.altKey || isTyping() || openTask || help) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || isTyping() || openTask || help || panel) return;
       if (e.key === '/') { e.preventDefault(); filterRef.current?.focus(); }
       else if (e.key === 'n' && board?.myRole !== 'VIEWER' && columns.length) { e.preventDefault(); setAddSignal((n) => n + 1); }
       else if (e.key === '?') { e.preventDefault(); setHelp(true); }
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
-  }, [board?.myRole, columns.length, openTask, help]);
+  }, [board?.myRole, columns.length, openTask, help, panel]);
 
   const onDragEnd = async ({ active, over }) => {
     if (!over || active.id === over.id) return;
+    if (active.data.current?.type === 'column') {
+      return moveColumn(active.id, over.data.current?.type === 'task' ? over.data.current.columnId : over.id);
+    }
     const overType = over.data.current?.type;
     const targetColId = overType === 'task' ? over.data.current.columnId : over.id;
     const target = columns.find((c) => c.id === targetColId);
@@ -181,7 +210,9 @@ export function KanbanBoard({ user }) {
           <Link to={`/w/${board.workspace.id}`} className="text-xs text-gray-500 hover:underline">← {board.workspace.name}</Link>
           <h1 className="text-lg font-bold text-gray-900 dark:text-white">{board.title}</h1>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className={btnGhost} onClick={() => setPanel('labels')}><Tag size={16} /> Étiquettes</button>
+          <button type="button" className={btnGhost} onClick={() => setPanel('archived')}><Archive size={16} /> Archives{board.archivedCount ? ` (${board.archivedCount})` : ''}</button>
           <button type="button" className={btnGhost} onClick={() => setHelp(true)} aria-label="Raccourcis clavier" title="Raccourcis clavier (?)"><Keyboard size={16} /></button>
           <Link to={`/b/${id}/stats`} className={btnGhost}><BarChart3 size={16} /> Statistiques</Link>
           <a href={`/api/boards/${id}/export.csv`} className={btnGhost}><Download size={16} /> Export CSV</a>
@@ -199,6 +230,16 @@ export function KanbanBoard({ user }) {
         <select className={`${input} w-36 py-1`} value={color} onChange={(e) => setFilter('color', e.target.value)} aria-label="Couleur">
           <option value="">Toutes couleurs</option>
           {Object.entries(COLOR_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        {board.labels.length > 0 && (
+          <select className={`${input} w-40 py-1`} value={labelF} onChange={(e) => setFilter('label', e.target.value)} aria-label="Étiquette">
+            <option value="">Toutes étiquettes</option>
+            {board.labels.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+        )}
+        <select className={`${input} w-36 py-1`} value={prio} onChange={(e) => setFilter('prio', e.target.value)} aria-label="Priorité">
+          <option value="">Toutes priorités</option>
+          {PRIORITIES.filter((p) => p.value !== 'NONE').map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
         <label className="flex items-center gap-1.5 text-gray-700 dark:text-gray-300">
           <input type="checkbox" checked={lateOnly} onChange={(e) => setFilter('late', e.target.checked ? '1' : '')} /> En retard
@@ -219,10 +260,12 @@ export function KanbanBoard({ user }) {
             },
           }}>
           <div className="flex h-full gap-4 items-start">
-            {columns.map((col) => (
-              <Column key={col.id} column={col} total={col.total} isLast={col.isLast} canEdit={canEdit} onOpen={setOpenTask} onError={setError}
-                onDelete={requestDelete} addSignal={col.id === firstColId ? addSignal : 0} />
-            ))}
+            <SortableContext items={columns.map((c) => c.id)} strategy={horizontalListSortingStrategy}>
+              {columns.map((col) => (
+                <Column key={col.id} column={col} total={col.total} isLast={col.isLast} canEdit={canEdit} onOpen={setOpenTask} onError={setError}
+                  onDelete={requestDelete} addSignal={col.id === firstColId ? addSignal : 0} labelsById={labelsById} />
+              ))}
+            </SortableContext>
             {canEdit && (
               <form onSubmit={addColumn} className="w-72 shrink-0 space-y-2">
                 <input className={input} placeholder="Nouvelle colonne" value={newCol} onChange={(e) => setNewCol(e.target.value)} required maxLength={80} aria-label="Nom de la nouvelle colonne" />
@@ -232,7 +275,9 @@ export function KanbanBoard({ user }) {
           </div>
         </DndContext>
       </div>
-      {openTask && <TaskDetail taskId={openTask} boardId={id} workspaceId={board.workspace.id} onClose={() => setOpenTask(null)} onChanged={load} />}
+      {openTask && <TaskDetail key={openTask} taskId={openTask} workspaceId={board.workspace.id} user={user} onClose={() => setOpenTask(null)} onChanged={load} onOpenTask={setOpenTask} />}
+      {panel === 'labels' && <LabelsModal board={board} canEdit={canEdit} onClose={() => setPanel(null)} onChanged={load} />}
+      {panel === 'archived' && <ArchivedModal boardId={id} canEdit={canEdit} onClose={() => setPanel(null)} onChanged={load} onOpen={(t) => { setPanel(null); setOpenTask(t); }} />}
       {pendingDelete && (
         <Toast message={`Colonne « ${pendingDelete.column.title} » et ses ${pendingDelete.column.total} tâche(s) supprimées.`} action="Annuler" onAction={undoDelete} />
       )}
@@ -243,6 +288,7 @@ export function KanbanBoard({ user }) {
             <dt><kbd>n</kbd></dt><dd>Nouvelle carte dans la première colonne</dd>
             <dt><kbd>Entrée</kbd></dt><dd>Ouvrir la carte sélectionnée</dd>
             <dt><kbd>Espace</kbd></dt><dd>Prendre / poser la carte, flèches pour la déplacer, Échap pour annuler</dd>
+            <dt><kbd>Espace</kbd> sur la poignée</dt><dd>Prendre / poser une colonne, flèches gauche et droite pour la déplacer</dd>
             <dt><kbd>?</kbd></dt><dd>Cette aide</dd>
           </dl>
         </Modal>

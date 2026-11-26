@@ -2,7 +2,7 @@
 // accès restreint, rétroliens, tâches liées.
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FileText, FileUp, GitCompare, Link2, Lock, Plus, RotateCcw, Search, SquareKanban, Unlink } from 'lucide-react';
+import { FileText, FileUp, GitCompare, Link2, Lock, Plus, RotateCcw, Search, SquareKanban, Trash2, Unlink, Users } from 'lucide-react';
 import { api } from '../../api';
 import { ErrorBox, Loading, Modal, ROLE_LABEL, btnGhost, btnPrimary, card, input, useApi } from '../../ui';
 import { WikiEditor } from './WikiEditor';
@@ -116,6 +116,12 @@ export function NewPageModal({ workspaceId, parentId, parentTitle, onClose, onCr
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
+  // Modèles de l'équipe (en plus des modèles fournis)
+  const team = useApi(() => api.get(`/workspaces/${workspaceId}/wiki/templates`), [workspaceId]);
+  const removeTemplate = async (t) => {
+    if (!window.confirm(`Supprimer le modèle « ${t.title} » ? Les pages déjà créées ne changent pas.`)) return;
+    try { await api.del(`/wiki/templates/${t.id}`); team.reload(); } catch (x) { setErr(x); }
+  };
   const create = async (tpl) => {
     setBusy(true);
     try {
@@ -161,6 +167,22 @@ export function NewPageModal({ workspaceId, parentId, parentTitle, onClose, onCr
         </button>
         <input ref={fileRef} type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" multiple className="hidden" onChange={importFiles} aria-label="Fichiers Markdown à importer" />
       </div>
+      {team.data?.templates.length > 0 && (
+        <>
+          <h3 className="mt-5 mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 flex items-center gap-1"><Users size={12} /> Modèles de l&apos;équipe</h3>
+          <div className="grid sm:grid-cols-2 gap-2">
+            {team.data.templates.map((t) => (
+              <div key={t.id} className={`${card} p-3 flex gap-3 hover:border-indigo-400`}>
+                <button type="button" disabled={busy} onClick={() => create({ ...t, id: `team-${t.id}`, icon: t.icon ?? '📄' })} className="flex gap-3 flex-1 min-w-0 text-left disabled:opacity-50">
+                  <span className="text-2xl" aria-hidden="true">{t.icon ?? '📄'}</span>
+                  <span className="min-w-0"><span className="block font-medium text-gray-900 dark:text-white text-sm truncate">{t.title}</span><span className="block text-xs text-gray-500">{t.description || `Par ${t.createdBy?.displayName ?? '—'}`}</span></span>
+                </button>
+                <button type="button" className="self-start text-gray-500 hover:text-red-600" onClick={() => removeTemplate(t)} aria-label={`Supprimer le modèle ${t.title}`}><Trash2 size={14} /></button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </Modal>
   );
 }

@@ -3,6 +3,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { MessageSquare, Paperclip, CalendarClock, CheckSquare } from 'lucide-react';
 import { format, isPast } from 'date-fns';
 import { fr } from 'date-fns/locale';
+import { LabelChip, PriorityIcon } from './boardMeta';
 
 export const COLORS = {
   white: 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700',
@@ -35,7 +36,7 @@ export function Avatars({ users, max = 4 }) {
   );
 }
 
-export function TaskCard({ task, onOpen, disabled, done: inDoneColumn = false }) {
+export function TaskCard({ task, onOpen, disabled, done: inDoneColumn = false, labelsById }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id, data: { type: 'task', columnId: task.columnId }, disabled,
   });
@@ -45,6 +46,7 @@ export function TaskCard({ task, onOpen, disabled, done: inDoneColumn = false })
   const progress = subtasks.length ? Math.round((done / subtasks.length) * 100) : 0;
   // Pas de badge « en retard » dans la dernière colonne (terminé) : même règle que les statistiques du serveur
   const late = !inDoneColumn && task.dueDate && isPast(new Date(task.dueDate));
+  const labels = (task.labelIds ?? []).map((id) => labelsById?.get(id)).filter(Boolean);
 
   return (
     <div
@@ -55,6 +57,9 @@ export function TaskCard({ task, onOpen, disabled, done: inDoneColumn = false })
       aria-label={`${task.title}${task.dueDate ? `, échéance ${format(new Date(task.dueDate), 'd MMMM', { locale: fr })}${late ? ', en retard' : ''}` : ''}${task.assignees?.length ? `, assignée à ${task.assignees.map((u) => u.displayName).join(', ')}` : ''}`}
       className={`p-3 mb-2 rounded-lg border shadow-sm hover:shadow-md transition-shadow ${disabled ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'} ${COLORS[task.color] ?? COLORS.white}`}
     >
+      {labels.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-1.5">{labels.map((l) => <LabelChip key={l.id} label={l} small />)}</div>
+      )}
       <div className="flex justify-between items-start gap-2 mb-1">
         <p className="text-sm font-medium text-gray-800 dark:text-gray-100 leading-snug break-words">{task.title}</p>
         {task.dueDate && (
@@ -72,7 +77,8 @@ export function TaskCard({ task, onOpen, disabled, done: inDoneColumn = false })
         </div>
       )}
       <div className="flex items-center justify-between mt-2 text-xs text-gray-500 dark:text-gray-400">
-        <span className="flex gap-3">
+        <span className="flex gap-3 items-center">
+          <PriorityIcon priority={task.priority} />
           {task._count?.attachments > 0 && <span className="flex items-center gap-1"><Paperclip size={12} /> {task._count.attachments}</span>}
           {task._count?.comments > 0 && <span className="flex items-center gap-1"><MessageSquare size={12} /> {task._count.comments}</span>}
         </span>

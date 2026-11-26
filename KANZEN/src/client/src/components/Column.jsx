@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { useDroppable } from '@dnd-kit/core';
-import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Plus, MoreHorizontal } from 'lucide-react';
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { GripVertical, Plus, MoreHorizontal } from 'lucide-react';
 import { TaskCard } from './TaskCard';
 import { api } from '../api';
 import { input, btnPrimary, btnGhost, btnDanger } from '../ui';
 
-export function Column({ column, canEdit, onOpen, onError, onDelete, isLast, total, addSignal }) {
-  const { setNodeRef, isOver } = useDroppable({ id: column.id, data: { type: 'column' } });
+export function Column({ column, canEdit, onOpen, onError, onDelete, isLast, total, addSignal, labelsById }) {
+  // Colonne déplaçable par sa poignée (réordonnancement), et zone de dépôt des cartes
+  const {
+    setNodeRef: setColumnRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging, isOver,
+  } = useSortable({ id: column.id, data: { type: 'column' }, disabled: { draggable: !canEdit, droppable: false } });
+  const colStyle = { transform: CSS.Translate.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState('');
   const [menu, setMenu] = useState(false);
@@ -45,8 +49,14 @@ export function Column({ column, canEdit, onOpen, onError, onDelete, isLast, tot
   });
 
   return (
-    <section aria-label={`Colonne ${column.title}`} className="flex flex-col w-72 shrink-0 max-h-full">
+    <section ref={setColumnRef} style={colStyle} aria-label={`Colonne ${column.title}`} className="flex flex-col w-72 shrink-0 max-h-full">
       <div className="flex items-center justify-between mb-2 px-1 relative">
+        {canEdit && (
+          <button type="button" ref={setActivatorNodeRef} {...attributes} {...listeners}
+            className="mr-1 text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 cursor-grab active:cursor-grabbing" aria-label={`Déplacer la colonne ${column.title}`}>
+            <GripVertical size={14} />
+          </button>
+        )}
         {renaming ? (
           <form onSubmit={rename} className="flex-1 mr-2">
             <input autoFocus className={`${input} py-1`} value={name} maxLength={80} aria-label="Nom de la colonne"
@@ -54,7 +64,7 @@ export function Column({ column, canEdit, onOpen, onError, onDelete, isLast, tot
               onKeyDown={(e) => { if (e.key === 'Escape') { setName(column.title); setRenaming(false); } }} />
           </form>
         ) : (
-          <h3 className="font-semibold text-gray-700 dark:text-gray-300 uppercase text-xs tracking-wider"
+          <h3 className="flex-1 min-w-0 truncate font-semibold text-gray-700 dark:text-gray-300 uppercase text-xs tracking-wider"
             onDoubleClick={() => { if (canEdit) { setName(column.title); setRenaming(true); } }}
             title={canEdit ? 'Double-clic pour renommer' : undefined}>{column.title}</h3>
         )}
@@ -80,9 +90,9 @@ export function Column({ column, canEdit, onOpen, onError, onDelete, isLast, tot
           </div>
         )}
       </div>
-      <div ref={setNodeRef} className={`flex-1 rounded-xl p-2 border-2 border-dashed overflow-y-auto min-h-[120px] ${isOver ? 'border-indigo-400 bg-indigo-50/50 dark:bg-indigo-900/20' : 'border-gray-200 dark:border-slate-700 bg-gray-100/50 dark:bg-slate-800/50'}`}>
+      <div className={`flex-1 rounded-xl p-2 border-2 border-dashed overflow-y-auto min-h-[120px] ${isOver ? 'border-indigo-400 bg-indigo-50/50 dark:bg-indigo-900/20' : 'border-gray-200 dark:border-slate-700 bg-gray-100/50 dark:bg-slate-800/50'}`}>
         <SortableContext items={column.tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-          {column.tasks.map((t) => <TaskCard key={t.id} task={t} onOpen={onOpen} disabled={!canEdit} done={isLast} />)}
+          {column.tasks.map((t) => <TaskCard key={t.id} task={t} onOpen={onOpen} disabled={!canEdit} done={isLast} labelsById={labelsById} />)}
         </SortableContext>
         {canEdit && (adding ? (
           <form onSubmit={addTask} className="space-y-2">
