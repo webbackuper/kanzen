@@ -38,7 +38,7 @@ export function CalendarView() {
           const dayTasks = tasks.filter((t) => isSameDay(parseISO(t.dueDate), day));
           return (
             <div key={day.toISOString()} className={`min-h-[100px] rounded-lg border p-2 ${isSameMonth(day, month) ? 'bg-white dark:bg-slate-800' : 'bg-gray-50 dark:bg-slate-900 opacity-60'} ${isToday(day) ? 'border-indigo-500' : 'border-gray-100 dark:border-slate-700'}`}>
-              <div className="text-right text-xs text-gray-400 mb-1 font-mono">{format(day, 'd')}</div>
+              <div className="text-right text-xs text-gray-500 dark:text-gray-400 mb-1 font-mono">{format(day, 'd')}</div>
               <div className="flex flex-col gap-1">
                 {dayTasks.map((t) => (
                   <Link key={t.id} to={`/b/${t.column.board.id}`} title={`${t.column.board.title} · ${t.column.title}${t.assignees.length ? ` · ${t.assignees.map((u) => u.displayName).join(', ')}` : ''}`}

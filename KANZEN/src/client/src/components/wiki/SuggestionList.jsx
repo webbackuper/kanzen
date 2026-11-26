@@ -26,7 +26,7 @@ export const SuggestionList = forwardRef(function SuggestionList({ items, comman
           {item.icon && <span className="w-6 h-6 shrink-0 flex items-center justify-center rounded border border-gray-200 dark:border-slate-700 text-gray-500">{item.icon}</span>}
           <span className="min-w-0">
             <span className="block truncate">{item.title}</span>
-            {item.hint && <span className="block truncate text-xs text-gray-400">{item.hint}</span>}
+            {item.hint && <span className="block truncate text-xs text-gray-500 dark:text-gray-400">{item.hint}</span>}
           </span>
         </button>
       ))}

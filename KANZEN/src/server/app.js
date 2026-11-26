@@ -20,6 +20,7 @@ import taskRoutes from './routes/tasks.js';
 import attachmentRoutes from './routes/attachments.js';
 import adminRoutes from './routes/admin.js';
 import wikiRoutes from './routes/wiki.js';
+import metaRoutes from './routes/meta.js';
 
 export async function buildApp({ cfg, prisma, ldap, logger } = {}) {
   const app = Fastify({
@@ -140,6 +141,7 @@ export async function buildApp({ cfg, prisma, ldap, logger } = {}) {
   await app.register(attachmentRoutes, { prefix: '/api' });
   await app.register(adminRoutes, { prefix: '/api' });
   await app.register(wikiRoutes, { prefix: '/api' });
+  await app.register(metaRoutes, { prefix: '/api' });
 
   // --- Interface web (build Vite) : les routes inconnues hors /api renvoient l'index (SPA) ---
   if (cfg.staticDir && fs.existsSync(cfg.staticDir)) {
@@ -149,8 +151,8 @@ export async function buildApp({ cfg, prisma, ldap, logger } = {}) {
       preCompressed: true, // sert les .gz générés au build (scripts/precompress.js) aux navigateurs qui les acceptent
       cacheControl: false,
       // Fichiers à empreinte (assets/) : cache d'un an ; index.html : revalidé à chaque visite (mise à jour immédiate)
-      setHeaders: (res, filePath) => {
-        res.setHeader('Cache-Control', filePath.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache');
+      setHeaders: (reply, filePath) => { // @fastify/static 10 : reçoit la réponse Fastify (et non http.ServerResponse)
+        reply.header('Cache-Control', filePath.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache');
       },
     });
     app.setNotFoundHandler((req, reply) => {

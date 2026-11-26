@@ -168,7 +168,7 @@ export function WorkspacePage({ user }) {
           <ul className="divide-y divide-gray-100 dark:divide-slate-800 mb-4">
             {ws.members.map((m) => (
               <li key={m.id} className="flex items-center justify-between py-2 gap-2">
-                <span className="text-sm dark:text-gray-200">{m.displayName} <span className="text-gray-400">({m.username})</span></span>
+                <span className="text-sm dark:text-gray-200">{m.displayName} <span className="text-gray-500 dark:text-gray-400">({m.username})</span></span>
                 <span className="flex items-center gap-2">
                   {isOwner ? (
                     <select className={`${input} w-36`} value={m.role} onChange={(e) => setRole(m.id, e.target.value)}>

@@ -42,6 +42,11 @@ try {
   await page.getByLabel('Mot de passe').fill('KanZen-Dev-2026!');
   await page.getByRole('button', { name: 'Se connecter' }).click();
   await page.getByRole('heading', { name: 'Espaces de travail' }).waitFor();
+  // « Quoi de neuf » : affiché une fois par version, puis plus jamais
+  await page.getByRole('dialog', { name: /Nouveautés de la version/ }).getByRole('button', { name: 'C\'est noté' }).click();
+  await page.reload();
+  await page.getByRole('heading', { name: 'Espaces de travail' }).waitFor();
+  assert.equal(await page.getByRole('dialog').count(), 0, '« Quoi de neuf » réaffiché');
 
   await page.getByText('Équipe Infra').click();
   await page.getByText('Migration datacenter').click();
@@ -71,6 +76,17 @@ try {
   await page.getByLabel('Fermer').click();
   await page.getByText('0/1').waitFor();
   await page.locator('[title="Alice Martin, Bob Durand"]').waitFor();
+
+  // Filtres du tableau (conservés dans l'adresse) et raccourci « / »
+  await page.keyboard.press('/');
+  await page.keyboard.type('Inventaire');
+  await page.waitForURL(/q=Inventaire/);
+  await page.getByText('Inventaire des VM').waitFor();
+  assert.equal(await page.getByText('Tâche E2E').count(), 0, 'filtre texte inopérant');
+  await page.getByLabel('Assigné').selectOption('me');
+  await page.getByText('Tâche E2E').waitFor({ state: 'detached' }).catch(() => {});
+  await page.getByRole('button', { name: 'Effacer les filtres' }).click();
+  await page.getByText('Tâche E2E').waitFor();
 
   // Agenda et statistiques
   await page.getByRole('link', { name: 'Agenda' }).click();

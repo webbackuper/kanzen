@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Calendar, LogOut, Moon, Sun, Users, ScrollText, UserCog, Search, BookOpen } from 'lucide-react';
+import { LayoutDashboard, Calendar, LogOut, Moon, Sun, Users, ScrollText, UserCog, Search, BookOpen, MessageSquarePlus } from 'lucide-react';
 import { api, setUnauthorizedHandler } from './api';
 import { Login, ChangePassword } from './components/Login';
 import { Workspaces, WorkspacePage, WikiIndex } from './components/Workspaces';
@@ -16,7 +16,8 @@ const WikiHome = lazy(() => wiki().then((m) => ({ default: m.WikiHome })));
 const WikiPage = lazy(() => wiki().then((m) => ({ default: m.WikiPage })));
 const WikiTrash = lazy(() => wiki().then((m) => ({ default: m.WikiTrash })));
 const WikiSearch = lazy(() => wiki().then((m) => ({ default: m.WikiSearch })));
-import { Loading, card } from './ui';
+import { ErrorBox, Loading, Modal, btnGhost, btnPrimary, card, input } from './ui';
+import { WHATS_NEW } from './whatsnew';
 
 function GlobalSearch() {
   const navigate = useNavigate();
@@ -25,7 +26,7 @@ function GlobalSearch() {
     <form role="search" className="hidden lg:block" onSubmit={(e) => { e.preventDefault(); if (q.trim()) { navigate(`/search?q=${encodeURIComponent(q.trim())}`); setQ(''); } }}>
       <label className="relative block">
         <span className="sr-only">Rechercher dans le wiki</span>
-        <Search size={14} className="absolute left-2.5 top-2 text-gray-400" />
+        <Search size={14} className="absolute left-2.5 top-2 text-gray-500 dark:text-gray-400" />
         <input className="w-52 pl-8 pr-2 py-1 rounded-md text-sm bg-gray-100 dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
           placeholder="Rechercher dans le wiki" value={q} onChange={(e) => setQ(e.target.value)} maxLength={200} />
       </label>
@@ -33,7 +34,57 @@ function GlobalSearch() {
   );
 }
 
-function NavBar({ user, onLogout, toggleTheme, isDark }) {
+function FeedbackModal({ onClose }) {
+  const [kind, setKind] = useState('idea');
+  const [message, setMessage] = useState('');
+  const [state, setState] = useState(null); // null | 'sending' | 'sent' | erreur
+  const send = async (e) => {
+    e.preventDefault();
+    setState('sending');
+    try { await api.post('/feedback', { kind, message, path: window.location.pathname }); setState('sent'); } catch (x) { setState(x); }
+  };
+  return (
+    <Modal title="Suggérer une idée ou signaler un problème" onClose={onClose}>
+      {state === 'sent' ? (
+        <div className="space-y-4 text-sm text-gray-700 dark:text-gray-200">
+          <p>Merci, votre message a été transmis à l&apos;équipe KanZen sous forme de carte dans son tableau de suivi.</p>
+          <button className={btnPrimary} onClick={onClose}>Fermer</button>
+        </div>
+      ) : (
+        <form onSubmit={send} className="space-y-3">
+          {state instanceof Error && <ErrorBox error={state} />}
+          <fieldset className="flex gap-4 text-sm text-gray-700 dark:text-gray-200">
+            <legend className="sr-only">Type de retour</legend>
+            <label className="flex items-center gap-1.5"><input type="radio" name="kind" checked={kind === 'idea'} onChange={() => setKind('idea')} /> Suggestion</label>
+            <label className="flex items-center gap-1.5"><input type="radio" name="kind" checked={kind === 'bug'} onChange={() => setKind('bug')} /> Anomalie</label>
+          </fieldset>
+          <textarea autoFocus className={`${input} min-h-[140px]`} value={message} onChange={(e) => setMessage(e.target.value)} required minLength={3} maxLength={4000}
+            aria-label="Votre message" placeholder={kind === 'bug' ? 'Ce que vous faisiez, ce qui s\'est passé, ce que vous attendiez…' : 'Votre idée, et le problème qu\'elle résoudrait…'} />
+          <p className="text-xs text-gray-500">Sont joints : votre nom, la page affichée et la version. Rien d&apos;autre n&apos;est collecté.</p>
+          <div className="flex justify-end gap-2">
+            <button type="button" className={btnGhost} onClick={onClose}>Annuler</button>
+            <button className={btnPrimary} disabled={state === 'sending'}>{state === 'sending' ? 'Envoi…' : 'Envoyer'}</button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
+function WhatsNew({ version, onClose }) {
+  return (
+    <Modal title={`Nouveautés de la version ${version}`} onClose={onClose}>
+      <ul className="space-y-3 text-sm">
+        {WHATS_NEW[version].map(([title, text]) => (
+          <li key={title}><p className="font-medium text-gray-900 dark:text-white">{title}</p><p className="text-gray-600 dark:text-gray-300">{text}</p></li>
+        ))}
+      </ul>
+      <div className="mt-5 flex justify-end"><button className={btnPrimary} onClick={onClose}>C&apos;est noté</button></div>
+    </Modal>
+  );
+}
+
+function NavBar({ user, onLogout, toggleTheme, isDark, onFeedback }) {
   // Le wiki d'un espace (/w/:id/wiki…), ses pages (/wiki/:id) et la recherche relèvent de l'onglet Wiki
   const inWiki = /^\/(wiki|search)(\/|$)|^\/w\/[^/]+\/wiki(\/|$)/.test(useLocation().pathname);
   const link = ({ isActive }) => `flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${isActive
@@ -56,14 +107,15 @@ function NavBar({ user, onLogout, toggleTheme, isDark }) {
       </div>
       <div className="flex items-center gap-3">
         <GlobalSearch />
-        <NavLink to="/search" className="lg:hidden text-gray-400" aria-label="Rechercher dans le wiki"><Search size={18} /></NavLink>
-        <button onClick={toggleTheme} className="text-gray-400 hover:text-yellow-500" aria-label="Changer de thème">{isDark ? <Sun size={18} /> : <Moon size={18} />}</button>
+        {onFeedback && <button onClick={onFeedback} className="text-gray-500 dark:text-gray-400 hover:text-indigo-600" aria-label="Suggérer une idée ou signaler un problème" title="Suggérer / signaler"><MessageSquarePlus size={18} /></button>}
+        <NavLink to="/search" className="lg:hidden text-gray-500 dark:text-gray-400" aria-label="Rechercher dans le wiki"><Search size={18} /></NavLink>
+        <button onClick={toggleTheme} className="text-gray-500 dark:text-gray-400 hover:text-yellow-500" aria-label="Changer de thème">{isDark ? <Sun size={18} /> : <Moon size={18} />}</button>
         <NavLink to="/account" className="text-right hidden sm:block" title="Mon compte">
           <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{user.displayName}</p>
           <p className="text-xs text-gray-500">{user.authSource === 'LDAP' ? 'Compte AD' : 'Compte local'}{user.role === 'ADMIN' ? ' · admin' : ''}</p>
         </NavLink>
-        <NavLink to="/account" className="sm:hidden text-gray-400" aria-label="Mon compte"><UserCog size={18} /></NavLink>
-        <button onClick={onLogout} className="text-gray-400 hover:text-red-600" aria-label="Se déconnecter"><LogOut size={18} /></button>
+        <NavLink to="/account" className="sm:hidden text-gray-500 dark:text-gray-400" aria-label="Mon compte"><UserCog size={18} /></NavLink>
+        <button onClick={onLogout} className="text-gray-500 dark:text-gray-400 hover:text-red-600" aria-label="Se déconnecter"><LogOut size={18} /></button>
       </div>
     </nav>
   );
@@ -98,6 +150,20 @@ export default function App() {
 
   const logout = async () => { await api.post('/auth/logout').catch(() => {}); setUser(null); };
 
+  // Version de l'instance : bouton de retour (si configuré) et « Quoi de neuf » une fois par version
+  const [meta, setMeta] = useState(null);
+  const [modal, setModal] = useState(null); // 'feedback' | 'whatsnew'
+  useEffect(() => {
+    if (!user || user.mustChangePassword) return;
+    api.get('/meta').then((m) => {
+      setMeta(m);
+      let seen = null;
+      try { seen = localStorage.getItem('kz-seen-version'); } catch { /* stockage indisponible */ }
+      if (WHATS_NEW[m.version] && seen !== m.version) setModal('whatsnew');
+    }, () => {});
+  }, [user?.id, user?.mustChangePassword]);
+  const closeWhatsNew = () => { try { localStorage.setItem('kz-seen-version', meta.version); } catch { /* idem */ } setModal(null); };
+
   if (user === undefined) return <Loading />;
   if (!user) return <Login onLogin={setUser} />;
   if (user.mustChangePassword) {
@@ -115,7 +181,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <div className="flex flex-col h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
-        <NavBar user={user} onLogout={logout} toggleTheme={() => setIsDark(!isDark)} isDark={isDark} />
+        <NavBar user={user} onLogout={logout} toggleTheme={() => setIsDark(!isDark)} isDark={isDark} onFeedback={meta?.feedback ? () => setModal('feedback') : null} />
+        {modal === 'feedback' && <FeedbackModal onClose={() => setModal(null)} />}
+        {modal === 'whatsnew' && meta && <WhatsNew version={meta.version} onClose={closeWhatsNew} />}
         <main className="flex-1 overflow-auto relative">
           <Suspense fallback={<Loading />}>
           <Routes>

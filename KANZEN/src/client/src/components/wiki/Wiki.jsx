@@ -103,7 +103,7 @@ function TreeNode({ node, depth, currentId, canEdit, onAdd, expanded, toggle, dn
         style={{ paddingLeft: depth * 12 }}
       >
         <button type="button" onClick={() => toggle(node.id)} aria-label={open ? 'Replier' : 'Déplier'} aria-expanded={open}
-          className={`p-0.5 text-gray-400 ${node.children.length ? '' : 'invisible'}`}>
+          className={`p-0.5 text-gray-500 dark:text-gray-400 ${node.children.length ? '' : 'invisible'}`}>
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
         <Link to={`/wiki/${node.id}`} draggable={false} className={`flex-1 truncate py-1 text-sm ${node.id === currentId ? 'font-semibold text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-gray-300'}`}>
@@ -112,7 +112,7 @@ function TreeNode({ node, depth, currentId, canEdit, onAdd, expanded, toggle, dn
         {node.restricted && <Lock size={12} className="text-amber-500 shrink-0" aria-label="Accès restreint" />}
         {canEdit && (
           <button type="button" onClick={() => onAdd(node.id)} aria-label={`Nouvelle sous-page de ${node.title}`} title="Nouvelle sous-page"
-            className="p-0.5 text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 focus:opacity-100">
+            className="p-0.5 text-gray-500 dark:text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 focus:opacity-100">
             <Plus size={14} />
           </button>
         )}
@@ -213,7 +213,7 @@ function WikiShell({ workspaceId, currentId, ancestorIds = [], onEvent, children
           <form onSubmit={(e) => { e.preventDefault(); if (q.trim()) navigate(`/search?q=${encodeURIComponent(q.trim())}&workspaceId=${workspaceId}`); }}>
             <label className="relative block">
               <span className="sr-only">Rechercher dans ce wiki</span>
-              <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
+              <Search size={14} className="absolute left-2.5 top-2.5 text-gray-500 dark:text-gray-400" />
               <input className={`${input} pl-8 py-1.5`} placeholder="Rechercher…" value={q} onChange={(e) => setQ(e.target.value)} maxLength={200} />
             </label>
           </form>
@@ -223,13 +223,13 @@ function WikiShell({ workspaceId, currentId, ancestorIds = [], onEvent, children
           onDrop={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); dnd.dropRoot(); } }}>
           {favorites.length > 0 && (
             <div className="mb-3">
-              <h2 className="px-1 mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 flex items-center gap-1"><Star size={11} /> Favoris</h2>
+              <h2 className="px-1 mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 flex items-center gap-1"><Star size={11} /> Favoris</h2>
               <ul>
                 {favorites.map((p) => (
                   <li key={p.id}><Link to={`/wiki/${p.id}`} className={`block truncate rounded-md px-2 py-1 text-sm ${p.id === currentId ? 'bg-indigo-50 dark:bg-indigo-900/40 font-semibold text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800'}`}>{p.icon ? `${p.icon} ` : ''}{p.title}</Link></li>
                 ))}
               </ul>
-              <h2 className="px-1 mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Pages</h2>
+              <h2 className="px-1 mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Pages</h2>
             </div>
           )}
           {error && tree && <ErrorBox error={error} />}
@@ -241,7 +241,7 @@ function WikiShell({ workspaceId, currentId, ancestorIds = [], onEvent, children
           ) : !tree ? <Loading /> : nodes.length === 0
             ? <p className="text-sm text-gray-500 p-2">Aucune page.</p>
             : <ul>{nodes.map((n) => <TreeNode key={n.id} node={n} depth={0} currentId={currentId} canEdit={canEdit} onAdd={add} expanded={expanded} toggle={toggle} dnd={dnd} />)}</ul>}
-          {canEdit && nodes.length > 1 && <p className="text-[11px] text-gray-400 px-2 mt-3">Astuce : glissez une page pour la réordonner ou la ranger dans une autre.</p>}
+          {canEdit && nodes.length > 1 && <p className="text-[11px] text-gray-500 dark:text-gray-400 px-2 mt-3">Astuce : glissez une page pour la réordonner ou la ranger dans une autre.</p>}
         </nav>
         {canEdit && (
           <div className="p-2 border-t border-gray-200 dark:border-slate-800 flex justify-between">
@@ -284,7 +284,7 @@ function PageList({ title, icon, pages, empty, meta }) {
         <ul className={`${card} divide-y divide-gray-100 dark:divide-slate-800`}>
           {pages.map((p) => (
             <li key={p.id}><Link to={`/wiki/${p.id}`} className="flex justify-between gap-4 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-800/60">
-              <span className="flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200 min-w-0"><FileText size={14} className="text-gray-400 shrink-0" /> <span className="truncate">{p.icon ? `${p.icon} ` : ''}{p.title}</span></span>
+              <span className="flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200 min-w-0"><FileText size={14} className="text-gray-500 dark:text-gray-400 shrink-0" /> <span className="truncate">{p.icon ? `${p.icon} ` : ''}{p.title}</span></span>
               <span className="text-xs text-gray-500 shrink-0">{meta(p)}</span>
             </Link></li>
           ))}
@@ -693,7 +693,7 @@ export function WikiPage({ user }) {
                   <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-2">Sous-pages</h2>
                   <ul className="grid sm:grid-cols-2 gap-2">
                     {page.children.map((c) => (
-                      <li key={c.id}><Link to={`/wiki/${c.id}`} className={`${card} flex items-center gap-2 px-3 py-2 text-sm hover:shadow-sm text-gray-800 dark:text-gray-200`}><FileText size={14} className="text-gray-400" /> {c.icon ? `${c.icon} ` : ''}{c.title}</Link></li>
+                      <li key={c.id}><Link to={`/wiki/${c.id}`} className={`${card} flex items-center gap-2 px-3 py-2 text-sm hover:shadow-sm text-gray-800 dark:text-gray-200`}><FileText size={14} className="text-gray-500 dark:text-gray-400" /> {c.icon ? `${c.icon} ` : ''}{c.title}</Link></li>
                     ))}
                   </ul>
                 </section>

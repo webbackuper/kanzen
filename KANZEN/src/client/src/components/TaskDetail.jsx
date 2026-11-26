@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Trash2, Paperclip, Download } from 'lucide-react';
+import { Trash2, Paperclip, Download, Link2, ClipboardCopy } from 'lucide-react';
 import { api } from '../api';
 import { COLORS, initials } from './TaskCard';
 import { ErrorBox, Loading, Modal, input, btnPrimary, btnGhost, btnDanger } from '../ui';
@@ -7,7 +7,18 @@ import { TaskWikiLinks } from './TaskWikiLinks';
 
 const fmtSize = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} Mo` : `${Math.ceil(n / 1024)} ko`);
 
-export function TaskDetail({ taskId, workspaceId, onClose, onChanged }) {
+/** Copie dans le presse-papiers ; repli pour les pages servies hors contexte sécurisé. */
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {
+    const t = document.createElement('textarea');
+    t.value = text; t.setAttribute('readonly', ''); t.style.position = 'fixed'; t.style.opacity = '0';
+    document.body.appendChild(t); t.select();
+    try { return document.execCommand('copy'); } finally { t.remove(); }
+  }
+}
+
+export function TaskDetail({ taskId, boardId, workspaceId, onClose, onChanged }) {
+  const [copied, setCopied] = useState(null);
   const [task, setTask] = useState(null);
   const [error, setError] = useState(null);
   const [form, setForm] = useState(null);
@@ -71,7 +82,7 @@ export function TaskDetail({ taskId, workspaceId, onClose, onChanged }) {
                     </button>
                   );
                 })}
-                {members.length === 0 && <span className="text-xs text-gray-400">Aucun membre</span>}
+                {members.length === 0 && <span className="text-xs text-gray-500 dark:text-gray-400">Aucun membre</span>}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -91,8 +102,8 @@ export function TaskDetail({ taskId, workspaceId, onClose, onChanged }) {
               {task.subtasks.map((s) => (
                 <li key={s.id} className="flex items-center gap-2 text-sm dark:text-gray-200">
                   <input type="checkbox" checked={s.completed} disabled={ro} onChange={run(() => api.patch(`/subtasks/${s.id}`, { completed: !s.completed }))} />
-                  <span className={s.completed ? 'line-through text-gray-400' : ''}>{s.content}</span>
-                  {!ro && <button className="ml-auto text-gray-400 hover:text-red-600" onClick={run(() => api.del(`/subtasks/${s.id}`))} aria-label="Supprimer"><Trash2 size={12} /></button>}
+                  <span className={s.completed ? 'line-through text-gray-500' : ''}>{s.content}</span>
+                  {!ro && <button className="ml-auto text-gray-500 dark:text-gray-400 hover:text-red-600" onClick={run(() => api.del(`/subtasks/${s.id}`))} aria-label="Supprimer"><Trash2 size={12} /></button>}
                 </li>
               ))}
             </ul>
@@ -127,13 +138,25 @@ export function TaskDetail({ taskId, workspaceId, onClose, onChanged }) {
         </div>
 
         <aside className="space-y-3">
+          {boardId && (() => {
+            const url = `${window.location.origin}/b/${boardId}?task=${taskId}`;
+            const due = task.dueDate ? ` (échéance ${new Date(task.dueDate).toLocaleDateString('fr-FR')})` : '';
+            const copy = async (kind, text) => { if (await copyText(text)) { setCopied(kind); setTimeout(() => setCopied(null), 2000); } };
+            return (
+              <div className="flex flex-col gap-1">
+                <button type="button" className={btnGhost} onClick={() => copy('link', url)}><Link2 size={14} /> {copied === 'link' ? 'Lien copié' : 'Copier le lien'}</button>
+                <button type="button" className={btnGhost} onClick={() => copy('md', `[${task.title.replace(/[[\]]/g, '')}](${url})${due}`)}><ClipboardCopy size={14} /> {copied === 'md' ? 'Copié' : 'Copier en Markdown'}</button>
+                <span className="sr-only" aria-live="polite">{copied ? 'Copié dans le presse-papiers' : ''}</span>
+              </div>
+            );
+          })()}
           <h3 className="text-sm font-semibold dark:text-gray-200 flex items-center gap-1"><Paperclip size={14} /> Pièces jointes</h3>
           <ul className="space-y-1">
             {task.attachments.map((a) => (
               <li key={a.id} className="flex items-center gap-2 text-sm dark:text-gray-200">
                 <a className="truncate hover:underline flex items-center gap-1" href={`/api/attachments/${a.id}/download`}><Download size={12} /> {a.filename}</a>
-                <span className="text-xs text-gray-400 shrink-0">{fmtSize(a.size)}</span>
-                {!ro && <button className="ml-auto text-gray-400 hover:text-red-600" onClick={run(() => api.del(`/attachments/${a.id}`))} aria-label="Supprimer"><Trash2 size={12} /></button>}
+                <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">{fmtSize(a.size)}</span>
+                {!ro && <button className="ml-auto text-gray-500 dark:text-gray-400 hover:text-red-600" onClick={run(() => api.del(`/attachments/${a.id}`))} aria-label="Supprimer"><Trash2 size={12} /></button>}
               </li>
             ))}
           </ul>

@@ -43,6 +43,8 @@ export function loadConfig(overrides = {}) {
     databaseUrl: read('DATABASE_URL'),
     logLevel: read('LOG_LEVEL', 'info'),
     staticDir: read('STATIC_DIR'),
+    // Tableau recevant les retours « Suggérer / signaler » (UUID du tableau, facultatif)
+    feedbackBoardId: read('FEEDBACK_BOARD_ID'),
     session: {
       cookieName: read('SESSION_COOKIE', isProd ? '__Host-kz_sid' : 'kz_sid'),
       secure: bool('SESSION_COOKIE_SECURE', isProd),
@@ -96,6 +98,7 @@ function validate(cfg) {
   const errors = [];
   if (!cfg.databaseUrl) errors.push('DATABASE_URL est obligatoire');
   if (cfg.isProd && !cfg.publicUrl) errors.push('PUBLIC_URL est obligatoire en production');
+  if (cfg.feedbackBoardId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cfg.feedbackBoardId)) errors.push('FEEDBACK_BOARD_ID doit être l\'UUID d\'un tableau (visible dans son adresse /b/<uuid>)');
   if (!cfg.auth.localEnabled && !cfg.auth.ldapEnabled) errors.push('Au moins une source d\'authentification doit être active');
   if (cfg.auth.ldapEnabled) {
     const l = cfg.ldap;

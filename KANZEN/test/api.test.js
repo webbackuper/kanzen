@@ -425,3 +425,30 @@ describe('arrêt du serveur', () => {
     await ctx.prisma.$disconnect();
   });
 });
+
+describe('interface web : cache et précompression', () => {
+  it('sert les assets précompressés avec un cache immuable, index.html sans cache', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const zlib = await import('node:zlib');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kz-static-'));
+    fs.mkdirSync(path.join(dir, 'assets'));
+    fs.writeFileSync(path.join(dir, 'index.html'), '<!doctype html><title>KanZen</title>');
+    const js = 'console.log("kanzen");'.repeat(200);
+    fs.writeFileSync(path.join(dir, 'assets', 'index-abc.js'), js);
+    fs.writeFileSync(path.join(dir, 'assets', 'index-abc.js.gz'), zlib.gzipSync(js));
+    await fresh({ env: { staticDir: dir } });
+    const a = await app.inject({ method: 'GET', url: '/assets/index-abc.js', headers: { 'accept-encoding': 'gzip' } });
+    expect(a.statusCode).toBe(200);
+    expect(a.headers['content-encoding']).toBe('gzip');
+    expect(a.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+    expect(zlib.gunzipSync(a.rawPayload).toString()).toBe(js);
+    const plain = await app.inject({ method: 'GET', url: '/assets/index-abc.js' });
+    expect(plain.headers['content-encoding']).toBeUndefined();
+    const i = await app.inject({ method: 'GET', url: '/b/123' }); // route de l'application : index.html
+    expect(i.statusCode).toBe(200);
+    expect(i.headers['cache-control']).toBe('no-cache');
+    expect(i.headers['content-security-policy']).toContain("default-src 'self'");
+  });
+});

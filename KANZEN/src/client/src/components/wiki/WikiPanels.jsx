@@ -91,7 +91,7 @@ export function IconPicker({ value, onChange }) {
     <span className="relative" ref={ref}>
       <button type="button" onClick={() => setOpen((v) => !v)} title="Icône de la page" aria-label="Choisir l'icône de la page"
         className="text-3xl w-12 h-12 rounded-lg border border-dashed border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center justify-center">
-        {value || <span className="text-base text-gray-400">+ 🙂</span>}
+        {value || <span className="text-base text-gray-500 dark:text-gray-400">+ 🙂</span>}
       </button>
       {open && (
         <div className="absolute z-30 left-0 top-14 w-72 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-2">
@@ -156,7 +156,7 @@ export function NewPageModal({ workspaceId, parentId, parentTitle, onClose, onCr
         ))}
         <button type="button" disabled={busy} onClick={() => fileRef.current?.click()}
           className={`${card} text-left p-3 border-dashed hover:border-indigo-400 disabled:opacity-50 flex gap-3`}>
-          <FileUp size={24} className="text-gray-400 shrink-0" />
+          <FileUp size={24} className="text-gray-500 dark:text-gray-400 shrink-0" />
           <span><span className="block font-medium text-gray-900 dark:text-white text-sm">Importer du Markdown</span><span className="block text-xs text-gray-500">Un ou plusieurs fichiers .md : une page par fichier.</span></span>
         </button>
         <input ref={fileRef} type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" multiple className="hidden" onChange={importFiles} aria-label="Fichiers Markdown à importer" />
@@ -323,7 +323,7 @@ export function Backlinks({ pageId, refreshKey }) {
       <ul className="flex flex-wrap gap-2">
         {data.pages.map((p) => (
           <li key={p.id}><Link to={`/wiki/${p.id}`} className={`${card} inline-flex items-center gap-1.5 px-3 py-1.5 text-sm hover:shadow-sm text-gray-800 dark:text-gray-200`}>
-            {p.icon ? <span>{p.icon}</span> : <FileText size={14} className="text-gray-400" />} {p.title}
+            {p.icon ? <span>{p.icon}</span> : <FileText size={14} className="text-gray-500 dark:text-gray-400" />} {p.title}
           </Link></li>
         ))}
       </ul>
@@ -340,7 +340,7 @@ function TaskPicker({ workspaceId, exclude, onPick, onClose }) {
   return (
     <Modal title="Lier une tâche" onClose={onClose}>
       <label className="relative block mb-3">
-        <Search size={14} className="absolute left-2.5 top-3 text-gray-400" />
+        <Search size={14} className="absolute left-2.5 top-3 text-gray-500 dark:text-gray-400" />
         <input className={`${input} pl-8`} placeholder="Rechercher une tâche par son titre" value={q} onChange={(e) => setQ(e.target.value)} autoFocus maxLength={200} aria-label="Rechercher une tâche" />
       </label>
       <ErrorBox error={error} />
@@ -385,7 +385,7 @@ export function TaskLinks({ page, canEdit, refreshKey }) {
                 <span className="block text-sm text-gray-900 dark:text-gray-100 truncate hover:underline">{t.title}</span>
                 <span className="block text-xs text-gray-500 truncate">{t.board.title} · {t.column}{t.assignees.length ? ` · ${t.assignees.map((a) => a.displayName).join(', ')}` : ''}</span>
               </button>
-              {canEdit && <button type="button" onClick={() => unlink(t)} className="text-gray-400 hover:text-red-600 p-1" title="Retirer le lien" aria-label={`Retirer le lien avec ${t.title}`}><Unlink size={14} /></button>}
+              {canEdit && <button type="button" onClick={() => unlink(t)} className="text-gray-500 dark:text-gray-400 hover:text-red-600 p-1" title="Retirer le lien" aria-label={`Retirer le lien avec ${t.title}`}><Unlink size={14} /></button>}
             </li>
           ))}
         </ul>
