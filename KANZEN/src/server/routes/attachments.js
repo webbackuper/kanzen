@@ -38,7 +38,7 @@ export default async function attachmentRoutes(app) {
       data: { filename, storageName, mimetype: file.mimetype, size, sha256: hash.digest('hex'), taskId: req.params.id, uploadedById: req.user.id },
       select: { id: true, filename: true, mimetype: true, size: true, uploadedAt: true, task: { select: { column: { select: { boardId: true } } } } },
     });
-    realtime.boardChanged(attachment.task.column.boardId, 'attachment');
+    realtime.boardChanged(attachment.task.column.boardId, 'attachment', req);
     const { task: _task, ...out } = attachment;
     return reply.code(201).send({ attachment: out });
   });
@@ -62,7 +62,7 @@ export default async function attachmentRoutes(app) {
     await authz.check(req.user, 'attachment', req.params.id, 'EDITOR');
     const a = await prisma.attachment.delete({ where: { id: req.params.id }, include: { task: { select: { column: { select: { boardId: true } } } } } });
     await app.removeStoredFiles([a.storageName]);
-    realtime.boardChanged(a.task.column.boardId, 'attachment');
+    realtime.boardChanged(a.task.column.boardId, 'attachment', req);
     return { ok: true };
   });
 }

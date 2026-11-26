@@ -60,7 +60,9 @@ export default async function authRoutes(app) {
       const data = { username: p.username, displayName: p.displayName, email: p.email, role: p.isAdmin ? 'ADMIN' : 'USER' };
       const existing = await prisma.user.findFirst({ where: { OR: [{ externalId: p.externalId }, { username: p.username }] } });
       if (existing && existing.authSource !== 'LDAP') return fail('username_conflict', existing); // pas d'usurpation d'un compte local
-      if (existing?.disabled) return fail('disabled', existing);
+      // Désactivé par la synchronisation AD et de retour dans le groupe : réactivation ; désactivé par un admin : refus
+      if (existing?.disabled && existing.disabledReason !== 'AD_SYNC') return fail('disabled', existing);
+      if (existing?.disabled) { data.disabled = false; data.disabledReason = null; await audit(req, 'user.reprovision', { target: existing.username, actor: existing, details: { source: 'LOGIN' } }); }
       user = existing
         ? await prisma.user.update({ where: { id: existing.id }, data })
         : await prisma.user.create({ data: { ...data, authSource: 'LDAP', externalId: p.externalId } });

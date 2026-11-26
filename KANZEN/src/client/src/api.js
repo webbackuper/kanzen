@@ -4,10 +4,15 @@ export class ApiError extends Error {
 }
 
 let onUnauthorized = () => {};
+// Identifiant de la websocket temps réel de cet onglet : renvoyé par le serveur dans les événements,
+// pour reconnaître l'écho de ses propres modifications.
+let socketId = null;
+export const setSocketId = (id) => { socketId = id ?? null; };
 export const setUnauthorizedHandler = (fn) => { onUnauthorized = fn; };
 
 async function request(method, url, body, { raw } = {}) {
   const headers = { 'X-Requested-With': 'KanZen' };
+  if (socketId && method !== 'GET') headers['X-Socket-Id'] = socketId;
   let payload;
   if (body instanceof FormData) payload = body;
   else if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }

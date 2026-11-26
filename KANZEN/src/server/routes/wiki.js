@@ -243,9 +243,35 @@ export default async function wikiRoutes(app) {
     }
     const page = await prisma.wikiPage.findUnique({ where: { id: req.params.id }, include: { createdBy: userRef, updatedBy: userRef } });
     await saveRevision(page, req.user.id);
+    collab?.saved(page.id);
     realtime.wikiChanged(workspaceId, { pageId: page.id, version: page.version, reason: 'update', by: req.user.displayName });
     return { page: publicPage(page) };
   });
+
+  /** Enregistrement automatique quand le dernier co-éditeur part sans enregistrer (voir wikiCollab.js). */
+  async function autosave(pageId, { content, title, icon }, user) {
+    if (!user) return;
+    const current = await prisma.wikiPage.findUnique({ where: { id: pageId } });
+    if (!current || current.deletedAt) return;
+    try { await checkPage(user, pageId, 'EDITOR'); } catch { return; } // droits retirés entre-temps
+    const doc = sanitizeDoc(content);
+    const text = docText(doc);
+    // Document partagé vide alors que la page a du contenu : état incohérent (client non TipTap, initialisation
+    // interrompue), on n'écrase rien. Un vidage volontaire passe par un enregistrement explicite.
+    if (!text.trim() && current.text.trim()) { app.log.warn({ pageId }, 'enregistrement automatique ignoré : document partagé vide'); return; }
+    const data = { content: doc, text, updatedById: user.id, version: { increment: 1 } };
+    if (typeof title === 'string' && title.trim()) data.title = title.trim().slice(0, 200);
+    if (typeof icon === 'string') data.icon = icon.slice(0, 16) || null;
+    const same = JSON.stringify(doc) === JSON.stringify(sanitizeDoc(current.content))
+      && (data.title ?? current.title) === current.title && (data.icon === undefined || data.icon === current.icon);
+    if (same) return; // rien n'a réellement changé (simple ouverture en édition)
+    const { count } = await prisma.wikiPage.updateMany({ where: { id: pageId, version: current.version, deletedAt: null }, data });
+    if (!count) return; // enregistrée entre-temps : la version enregistrée prévaut
+    const page = await prisma.wikiPage.findUnique({ where: { id: pageId } });
+    await saveRevision(page, user.id);
+    await app.audit(null, 'wiki.autosave', { actor: user, target: pageId, details: { version: page.version } });
+    realtime.wikiChanged(page.workspaceId, { pageId, version: page.version, reason: 'update', by: `${user.displayName} (enregistrement automatique)` });
+  }
 
   // Déplacement dans l'arborescence (changement de parent et/ou réordonnancement)
   app.post('/wiki/pages/:id/move', {
@@ -687,6 +713,6 @@ export default async function wikiRoutes(app) {
   });
 
   // --- Co-édition en temps réel (Yjs sur Socket.io) ---
-  collab = attachWikiCollab({ io: realtime.io, prisma, authz, access });
+  collab = attachWikiCollab({ io: realtime.io, prisma, authz, access, onAbandon: autosave, log: app.log });
   realtime.wikiCollab = collab; // accessible hors du plugin (diagnostic, tests)
 }

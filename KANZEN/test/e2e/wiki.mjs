@@ -25,6 +25,9 @@ const step = (m) => console.log(`• ${m}`);
 const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 async function login(user) {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  // « Quoi de neuf » déjà vu (testé dans smoke.mjs) : pas de fenêtre au-dessus de l'interface
+  const { version } = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  await ctx.addInitScript((v) => { try { localStorage.setItem('kz-seen-version', v); } catch { /* */ } }, version);
   const page = await ctx.newPage();
   page.on('console', (m) => m.type() === 'error' && errors.push(`[${user}] ${m.text()}`));
   page.on('pageerror', (e) => errors.push(`[${user}] ${e.message}`));

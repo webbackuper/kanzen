@@ -226,5 +226,47 @@ describe('wiki v2 (API)', () => {
         a.disconnect(); b.disconnect(); v.disconnect();
       }
     });
+
+    it('enregistre automatiquement quand le dernier éditeur part sans enregistrer, sauf abandon explicite', async () => {
+      const page = await create(editor, { title: 'Brouillon', content: doc(p('avant')) });
+      const typed = (pageId, sock, text) => {
+        const d = new Y.Doc();
+        const para = new Y.XmlElement('paragraph');
+        para.insert(0, [new Y.XmlText(text)]);
+        d.getXmlFragment('default').insert(0, [para]);
+        d.getMap('meta').set('title', 'Brouillon');
+        sock.emit('wiki-collab:update', { pageId, update: Y.encodeStateAsUpdate(d) });
+      };
+      const settle = () => new Promise((r) => setTimeout(r, 250));
+      // 1. Fermeture de l'onglet (déconnexion) : le travail est enregistré
+      const a = await connect('editor');
+      try {
+        expect((await join(a, page.id)).seed).toBe(true);
+        a.emit('wiki-collab:update', { pageId: page.id, update: Y.encodeStateAsUpdate(new Y.Doc()) }); // initialisation
+        await settle();
+        typed(page.id, a, 'saisie non enregistrée');
+        await settle();
+      } finally { a.disconnect(); }
+      await settle();
+      let saved = (await editor.get(`/api/wiki/pages/${page.id}`)).json().page;
+      expect(saved.version).toBe(2);
+      expect(JSON.stringify(saved.content)).toContain('saisie non enregistrée');
+      expect(await prisma.auditLog.count({ where: { action: 'wiki.autosave', target: page.id } })).toBe(1);
+      // 2. « Annuler » (leave + discard) : rien n'est enregistré
+      const b = await connect('editor');
+      try {
+        expect((await join(b, page.id)).seed).toBe(true);
+        b.emit('wiki-collab:update', { pageId: page.id, update: Y.encodeStateAsUpdate(new Y.Doc()) });
+        await settle();
+        typed(page.id, b, 'à jeter');
+        await settle();
+        b.emit('wiki-collab:leave', { pageId: page.id, discard: true });
+        await settle();
+      } finally { b.disconnect(); }
+      await settle();
+      saved = (await editor.get(`/api/wiki/pages/${page.id}`)).json().page;
+      expect(saved.version).toBe(2);
+      expect(JSON.stringify(saved.content)).not.toContain('à jeter');
+    });
   });
 });

@@ -100,7 +100,7 @@ La glibc de ce poste n'a pas d'importance : le runtime Node embarqué est le bin
 ```bash
 git clone https://github.com/webbackuper/kanzen.git
 cd kanzen
-git checkout <tag ou commit validé>    # ex. v3.0.0 ; ne jamais builder une branche mouvante
+git checkout <tag ou commit validé>    # ex. v3.1.0 ; ne jamais builder une branche mouvante
 git log -1 --format='%H %an %ad %s'    # à reporter dans la fiche de transfert
 git status --short                     # doit être vide
 ```
@@ -110,7 +110,7 @@ git status --short                     # doit être vide
 ### 1.3 Construction
 
 ```bash
-packaging/build.sh 3.0.0 1     # version, release
+packaging/build.sh 3.1.0 1     # version, release
 ls -l dist/
 ```
 
@@ -126,8 +126,8 @@ Contrôles à faire avant de poursuivre :
 
 ```bash
 cd dist && sha256sum -c SHA256SUMS
-rpm -qpi kanzen-3.0.0-1.x86_64.rpm | head        # si rpm est disponible
-dpkg-deb -I kanzen_3.0.0-1_amd64.deb             # si dpkg est disponible
+rpm -qpi kanzen-3.1.0-1.x86_64.rpm | head        # si rpm est disponible
+dpkg-deb -I kanzen_3.1.0-1_amd64.deb             # si dpkg est disponible
 ```
 
 ### 1.4 Dépendances système à prévoir côté cible
@@ -162,21 +162,21 @@ sha256sum * > SHA256SUMS
 ### 1.5 Lot de transfert
 
 ```
-kanzen-3.0.0-lot/
+kanzen-3.1.0-lot/
 ├── FICHE-TRANSFERT.txt        # commit, date, intégrateur, liste des fichiers, empreintes
 ├── paquets/
-│   ├── kanzen-3.0.0-1.x86_64.rpm
-│   ├── kanzen_3.0.0-1_amd64.deb
-│   ├── kanzen-3.0.0-linux-x64.tar.gz
+│   ├── kanzen-3.1.0-1.x86_64.rpm
+│   ├── kanzen_3.1.0-1_amd64.deb
+│   ├── kanzen-3.1.0-linux-x64.tar.gz
 │   ├── SHA256SUMS
 │   └── sbom.cdx.json
 ├── deps/                      # uniquement dans le cas 2
 ├── docs/                      # ce plan, auth-ad.md, 03-packaging.md
-└── sources/kanzen-3.0.0-src.tar.gz   # git archive, pour audit ou rebuild
+└── sources/kanzen-3.1.0-src.tar.gz   # git archive, pour audit ou rebuild
 ```
 
 ```bash
-git archive --format=tar.gz --prefix=kanzen-3.0.0/ -o sources/kanzen-3.0.0-src.tar.gz HEAD
+git archive --format=tar.gz --prefix=kanzen-3.1.0/ -o sources/kanzen-3.1.0-src.tar.gz HEAD
 sha256sum -b paquets/* sources/* > SHA256SUMS.lot
 ```
 
@@ -203,7 +203,7 @@ L'empreinte de `SHA256SUMS.lot` est aussi à transmettre **hors bande** au respo
    L'empreinte de `SHA256SUMS.lot` doit correspondre à celle reçue hors bande. **Tout écart bloque le déploiement.**
 4. **Dépôt** sur un partage interne de référence (dépôt logiciel interne, en lecture seule pour les admins), puis copie sur la VM :
    ```bash
-   scp paquets/kanzen-3.0.0-1.x86_64.rpm admin@kanzen01:/tmp/
+   scp paquets/kanzen-3.1.0-1.x86_64.rpm admin@kanzen01:/tmp/
    ```
 5. **Traçabilité** : consigner au registre la date, l'opérateur, le support, les empreintes et le résultat antivirus. La consultation du SBOM (`sbom.cdx.json`) permet au RSSI de suivre les composants embarqués.
 
@@ -409,11 +409,11 @@ echo "$PGPASS"      # à reporter dans DATABASE_URL (§ 4.3), puis : unset PGPAS
 
 ```bash
 # [RPM]
-dnf install -y /tmp/kanzen-3.0.0-1.x86_64.rpm
+dnf install -y /tmp/kanzen-3.1.0-1.x86_64.rpm
 # [DEB]
-apt install -y /tmp/kanzen_3.0.0-1_amd64.deb
+apt install -y /tmp/kanzen_3.1.0-1_amd64.deb
 # Autre distribution systemd : bundle
-tar xzf kanzen-3.0.0-linux-x64.tar.gz && cd kanzen-3.0.0 && ./install.sh
+tar xzf kanzen-3.1.0-linux-x64.tar.gz && cd kanzen-3.1.0 && ./install.sh
 
 kanzenctl version
 ```
@@ -536,9 +536,10 @@ curl -fsS https://kanzen.corp.local/api/health     # {"status":"ok"}
 
 1. Se connecter avec un compte membre de `GG_KanZen_Admins` : il obtient le rôle ADMIN.
 2. **Comptes** : vérifier la présence du compte `secours`. Créer les éventuels comptes locaux (prestataires hors domaine), avec un mot de passe temporaire ; le changement est imposé à la première connexion.
-3. Créer les espaces de travail et y ajouter les membres (rôles Propriétaire, Éditeur, Lecteur). Un utilisateur AD apparaît dans la liste après sa **première connexion**.
-4. Créer la page d'accueil du **Wiki** de chaque espace : conventions, contacts, procédures.
-5. **Audit** : vérifier la trace des connexions de la recette.
+3. Créer les espaces de travail et y ajouter les membres (rôles Propriétaire, Éditeur, Lecteur). Les agents du groupe d'accès AD sont proposés **même s'ils ne se sont jamais connectés** (mention « annuaire AD ») ; leur compte est créé à l'ajout.
+4. Facultatif : créer un espace « KanZen » avec un tableau « Retours », noter son identifiant (adresse `/b/<uuid>`) dans `FEEDBACK_BOARD_ID` de `kanzen.env`, puis `systemctl restart kanzen`. Le bouton « Suggérer / signaler » de la barre du haut y crée une carte par retour.
+5. Créer la page d'accueil du **Wiki** de chaque espace : conventions, contacts, procédures.
+6. **Audit** : vérifier la trace des connexions de la recette.
 
 ---
 
@@ -566,6 +567,7 @@ Chaque contrôle est consigné (OK / KO / commentaire) dans le procès-verbal de
 | T14 | Restauration | Procédure § 6.4 sur une **VM de recette** | Données et pièces jointes identiques |
 | T15 | Journaux vers le SIEM | Connexion échouée volontaire | Événement `auth.login` / `failure` reçu par le SIEM |
 | T16 | Aucun flux sortant inattendu | `ss -tnp state established` pendant la recette | Uniquement les DC, DNS, NTP, syslog |
+| T17 | Assets compressés et en cache | `curl -sI -H 'Accept-Encoding: gzip' https://kanzen.corp.local/assets/<index-…js>` | `Content-Encoding: gzip`, `Cache-Control: … immutable` ; `/` en `no-cache` |
 
 ### 5.2 Recette sécurité et authentification
 
@@ -588,6 +590,8 @@ Chaque contrôle est consigné (OK / KO / commentaire) dans le procès-verbal de
 | S15 | Lecteur d'un espace | Lecture seule (tableaux et wiki), aucune modification possible |
 | S16 | Pièce jointe `.html` ou `.svg` | HTML refusé ; SVG servi uniquement en téléchargement |
 | S17 | Lien `javascript:` collé dans le wiki | Lien retiré à l'enregistrement |
+| S18 | **Départ AD** : retirer un compte de test de `GG_KanZen_Users` pendant qu'il est connecté, puis `kanzenctl ad-sync` | Session coupée immédiatement, compte désactivé, audit `user.deprovision` ; remis dans le groupe : réactivé au passage suivant |
+| S19 | Synchronisation avec un `LDAP_GROUP_USERS` erroné (groupe vide) | Aucun compte désactivé, échec `directory.sync` (garde-fou) journalisé |
 
 ### 5.3 Recette fonctionnelle
 
@@ -607,6 +611,10 @@ Chaque contrôle est consigné (OK / KO / commentaire) dans le procès-verbal de
 | F12 | Wiki ↔ Kanban : tâche liée à une page, visible dans la fiche de la tâche et en bas de la page |
 | F13 | Wiki : accès restreint (« ⋯ » → « Restreindre l'accès… ») — un membre non coché ne voit la page ni dans l'arbre, ni dans la recherche, ni par son URL ou ses fichiers |
 | F14 | Wiki : favori, « Consultées récemment », page affichée en tête de l'accueil |
+| F15 | Ajout à un espace d'un agent AD qui ne s'est **jamais connecté** | Proposé avec la mention « annuaire AD », ajouté ; un agent hors groupe n'est pas proposé |
+| F16 | Wiki : deux éditeurs modifient une page, puis ferment leurs onglets sans enregistrer | Le travail est enregistré automatiquement (nouvelle version « enregistrement automatique ») |
+| F17 | Tableau : filtre (texte, « Mes cartes », en retard), raccourcis `/`, `n`, `?`, déplacement au clavier (Espace, flèches) | Filtre conservé dans l'adresse ; annonces vocales en français |
+| F18 | Supprimer une colonne puis « Annuler » dans les 8 s | Colonne et cartes restaurées ; sans annulation, suppression effective |
 
 ---
 
@@ -620,6 +628,8 @@ journalctl -u kanzen -f              # journaux applicatifs (JSON)
 journalctl -u kanzen -o cat | grep '"audit"'    # événements d'audit
 kanzenctl check [identifiant]        # diagnostic
 kanzenctl backup                     # sauvegarde immédiate
+kanzenctl ad-sync                    # synchronisation AD immédiate (départs, retours) ; automatique toutes les 15 min
+journalctl -u kanzen -o cat | grep -E 'user\.(deprovision|reprovision)|directory\.sync'   # effets de la synchronisation
 systemctl list-timers kanzen-backup.timer
 ```
 
@@ -776,12 +786,12 @@ Si l'hébergement cible est une plateforme de conteneurs (Podman, Docker, Kubern
 
 ```bash
 # Zone connectée
-cd KANZEN && docker build -t kanzen:3.0.0 .
+cd KANZEN && docker build -t kanzen:3.1.0 .
 docker pull postgres:16-alpine && docker pull caddy:2.8-alpine
-docker save kanzen:3.0.0 postgres:16-alpine caddy:2.8-alpine | gzip > kanzen-images-3.0.0.tar.gz
-sha256sum kanzen-images-3.0.0.tar.gz > kanzen-images-3.0.0.tar.gz.sha256
+docker save kanzen:3.1.0 postgres:16-alpine caddy:2.8-alpine | gzip > kanzen-images-3.1.0.tar.gz
+sha256sum kanzen-images-3.1.0.tar.gz > kanzen-images-3.1.0.tar.gz.sha256
 # Après le sas (mêmes contrôles qu'au § 2)
-podman load -i kanzen-images-3.0.0.tar.gz      # ou docker load
+podman load -i kanzen-images-3.1.0.tar.gz      # ou docker load
 ```
 
 Le fichier `docker-compose.yml` sert de base. Dans ce mode :

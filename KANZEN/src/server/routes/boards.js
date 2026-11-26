@@ -20,7 +20,7 @@ export default async function boardRoutes(app) {
           orderBy: { position: 'asc' },
           include: {
             tasks: {
-              orderBy: { position: 'asc' },
+              orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
               include: {
                 assignees: assigneesSel,
                 subtasks: { orderBy: { position: 'asc' } },
@@ -41,7 +41,7 @@ export default async function boardRoutes(app) {
   }, async (req) => {
     await authz.check(req.user, 'board', req.params.id, 'EDITOR');
     const board = await prisma.board.update({ where: { id: req.params.id }, data: req.body });
-    realtime.boardChanged(board.id, 'board');
+    realtime.boardChanged(board.id, 'board', req);
     return { board };
   });
 
@@ -66,7 +66,7 @@ export default async function boardRoutes(app) {
     const column = await prisma.column.create({
       data: { ...req.body, position: req.body.position ?? (last?.position ?? 0) + 1000, boardId: req.params.id },
     });
-    realtime.boardChanged(req.params.id, 'column');
+    realtime.boardChanged(req.params.id, 'column', req);
     return reply.code(201).send({ column });
   });
 
@@ -76,7 +76,7 @@ export default async function boardRoutes(app) {
   }, async (req) => {
     await authz.check(req.user, 'column', req.params.id, 'EDITOR');
     const column = await prisma.column.update({ where: { id: req.params.id }, data: req.body });
-    realtime.boardChanged(column.boardId, 'column');
+    realtime.boardChanged(column.boardId, 'column', req);
     return { column };
   });
 
@@ -85,7 +85,7 @@ export default async function boardRoutes(app) {
     const files = await app.storedFilesOf({ columnId: req.params.id });
     const column = await prisma.column.delete({ where: { id: req.params.id } });
     await app.removeStoredFiles(files);
-    realtime.boardChanged(column.boardId, 'column');
+    realtime.boardChanged(column.boardId, 'column', req);
     return { ok: true };
   });
 

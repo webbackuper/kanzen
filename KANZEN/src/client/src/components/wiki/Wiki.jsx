@@ -9,7 +9,9 @@ import {
 import { api } from '../../api';
 import { ErrorBox, Loading, Modal, btnDanger, btnGhost, btnPrimary, card, input, useApi } from '../../ui';
 import { WikiEditor } from './WikiEditor';
-import { openCollab, colorOf } from './collab';
+import { colorOf } from './colors';
+// Co-édition (Yjs) chargée à la demande, au passage en édition
+const loadCollab = () => import('./collab');
 import {
   AccessModal, Backlinks, HistoryModal, IconPicker, NewPageModal, Peers, TaskLinks, Toc, docHeadings, fmt,
 } from './WikiPanels';
@@ -59,9 +61,17 @@ function useWikiTree(workspaceId, onEvent) {
     if (!workspaceId) return undefined;
     load();
     const socket = io({ path: '/socket.io', withCredentials: true });
-    socket.on('connect', () => socket.emit('wiki:join', workspaceId));
-    socket.on('wiki:changed', (e) => { if (e.workspaceId === workspaceId) { load(); eventRef.current?.(e); } });
-    return () => socket.disconnect();
+    let timer = null;
+    let connectedOnce = false;
+    const reloadSoon = () => { clearTimeout(timer); timer = setTimeout(load, 250); }; // rafales regroupées
+    socket.on('connect', () => {
+      socket.emit('wiki:join', workspaceId);
+      // Reconnexion : rattrapage de l'arborescence et de la page affichée (modifications manquées pendant la coupure)
+      if (connectedOnce) { reloadSoon(); eventRef.current?.({ workspaceId, reason: 'resync' }); }
+      connectedOnce = true;
+    });
+    socket.on('wiki:changed', (e) => { if (e.workspaceId === workspaceId) { reloadSoon(); eventRef.current?.(e); } });
+    return () => { clearTimeout(timer); socket.disconnect(); };
   }, [workspaceId, load]);
   return { tree, error, reload: load };
 }
@@ -93,7 +103,7 @@ function TreeNode({ node, depth, currentId, canEdit, onAdd, expanded, toggle, dn
         style={{ paddingLeft: depth * 12 }}
       >
         <button type="button" onClick={() => toggle(node.id)} aria-label={open ? 'Replier' : 'Déplier'} aria-expanded={open}
-          className={`p-0.5 text-gray-400 ${node.children.length ? '' : 'invisible'}`}>
+          className={`p-0.5 text-gray-500 dark:text-gray-400 ${node.children.length ? '' : 'invisible'}`}>
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
         <Link to={`/wiki/${node.id}`} draggable={false} className={`flex-1 truncate py-1 text-sm ${node.id === currentId ? 'font-semibold text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-gray-300'}`}>
@@ -102,7 +112,7 @@ function TreeNode({ node, depth, currentId, canEdit, onAdd, expanded, toggle, dn
         {node.restricted && <Lock size={12} className="text-amber-500 shrink-0" aria-label="Accès restreint" />}
         {canEdit && (
           <button type="button" onClick={() => onAdd(node.id)} aria-label={`Nouvelle sous-page de ${node.title}`} title="Nouvelle sous-page"
-            className="p-0.5 text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 focus:opacity-100">
+            className="p-0.5 text-gray-500 dark:text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 focus:opacity-100">
             <Plus size={14} />
           </button>
         )}
@@ -203,7 +213,7 @@ function WikiShell({ workspaceId, currentId, ancestorIds = [], onEvent, children
           <form onSubmit={(e) => { e.preventDefault(); if (q.trim()) navigate(`/search?q=${encodeURIComponent(q.trim())}&workspaceId=${workspaceId}`); }}>
             <label className="relative block">
               <span className="sr-only">Rechercher dans ce wiki</span>
-              <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
+              <Search size={14} className="absolute left-2.5 top-2.5 text-gray-500 dark:text-gray-400" />
               <input className={`${input} pl-8 py-1.5`} placeholder="Rechercher…" value={q} onChange={(e) => setQ(e.target.value)} maxLength={200} />
             </label>
           </form>
@@ -213,13 +223,13 @@ function WikiShell({ workspaceId, currentId, ancestorIds = [], onEvent, children
           onDrop={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); dnd.dropRoot(); } }}>
           {favorites.length > 0 && (
             <div className="mb-3">
-              <h2 className="px-1 mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 flex items-center gap-1"><Star size={11} /> Favoris</h2>
+              <h2 className="px-1 mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 flex items-center gap-1"><Star size={11} /> Favoris</h2>
               <ul>
                 {favorites.map((p) => (
                   <li key={p.id}><Link to={`/wiki/${p.id}`} className={`block truncate rounded-md px-2 py-1 text-sm ${p.id === currentId ? 'bg-indigo-50 dark:bg-indigo-900/40 font-semibold text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800'}`}>{p.icon ? `${p.icon} ` : ''}{p.title}</Link></li>
                 ))}
               </ul>
-              <h2 className="px-1 mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Pages</h2>
+              <h2 className="px-1 mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Pages</h2>
             </div>
           )}
           {error && tree && <ErrorBox error={error} />}
@@ -231,7 +241,7 @@ function WikiShell({ workspaceId, currentId, ancestorIds = [], onEvent, children
           ) : !tree ? <Loading /> : nodes.length === 0
             ? <p className="text-sm text-gray-500 p-2">Aucune page.</p>
             : <ul>{nodes.map((n) => <TreeNode key={n.id} node={n} depth={0} currentId={currentId} canEdit={canEdit} onAdd={add} expanded={expanded} toggle={toggle} dnd={dnd} />)}</ul>}
-          {canEdit && nodes.length > 1 && <p className="text-[11px] text-gray-400 px-2 mt-3">Astuce : glissez une page pour la réordonner ou la ranger dans une autre.</p>}
+          {canEdit && nodes.length > 1 && <p className="text-[11px] text-gray-500 dark:text-gray-400 px-2 mt-3">Astuce : glissez une page pour la réordonner ou la ranger dans une autre.</p>}
         </nav>
         {canEdit && (
           <div className="p-2 border-t border-gray-200 dark:border-slate-800 flex justify-between">
@@ -274,7 +284,7 @@ function PageList({ title, icon, pages, empty, meta }) {
         <ul className={`${card} divide-y divide-gray-100 dark:divide-slate-800`}>
           {pages.map((p) => (
             <li key={p.id}><Link to={`/wiki/${p.id}`} className="flex justify-between gap-4 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-800/60">
-              <span className="flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200 min-w-0"><FileText size={14} className="text-gray-400 shrink-0" /> <span className="truncate">{p.icon ? `${p.icon} ` : ''}{p.title}</span></span>
+              <span className="flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200 min-w-0"><FileText size={14} className="text-gray-500 dark:text-gray-400 shrink-0" /> <span className="truncate">{p.icon ? `${p.icon} ` : ''}{p.title}</span></span>
               <span className="text-xs text-gray-500 shrink-0">{meta(p)}</span>
             </Link></li>
           ))}
@@ -393,6 +403,12 @@ function MoreMenu({ items }) {
   );
 }
 
+// Brouillons locaux (localStorage, par page) : filet de sécurité côté poste. Toute erreur de stockage est ignorée.
+const draftKey = (id) => `kz-wiki-draft:${id}`;
+function writeLocalDraft(id, d) { try { localStorage.setItem(draftKey(id), JSON.stringify({ ...d, at: new Date().toISOString() })); } catch { /* stockage plein ou interdit */ } }
+function readLocalDraft(id) { try { const d = JSON.parse(localStorage.getItem(draftKey(id)) ?? 'null'); return d?.content ? d : null; } catch { return null; } }
+function clearLocalDraft(id) { try { localStorage.removeItem(draftKey(id)); } catch { /* idem */ } }
+
 // --- Page : lecture et édition (co-édition en temps réel quand c'est possible) ---
 export function WikiPage({ user }) {
   const { id } = useParams();
@@ -418,7 +434,7 @@ export function WikiPage({ user }) {
 
   const load = useCallback(() => api.get(`/wiki/pages/${id}`).then((r) => { setPage(r.page); setError(null); }, setError), [id]);
 
-  const closeSession = () => { sessionRef.current?.close?.(); sessionRef.current = null; setSession(null); setPeers([]); };
+  const closeSession = (opts) => { sessionRef.current?.close?.(opts); sessionRef.current = null; setSession(null); setPeers([]); };
   useEffect(() => { closeSession(); setEditing(false); setDirty(false); setConflict(null); setNotice(null); setModal(null); load(); }, [id, load]);
   useEffect(() => () => closeSession(), []);
 
@@ -432,6 +448,7 @@ export function WikiPage({ user }) {
 
   // Modifications d'autres utilisateurs reçues en temps réel
   const onEvent = useCallback((e) => {
+    if (e.reason === 'resync') { setLinksKey((k) => k + 1); if (!editingRef.current) load(); return; }
     if (e.reason === 'links') { setLinksKey((k) => k + 1); return; }
     if (e.pageId !== id) { setLinksKey((k) => k + 1); return; }
     if (e.reason === 'purge') { navigate(-1); return; }
@@ -447,6 +464,24 @@ export function WikiPage({ user }) {
     } else load();
   }, [id, load, navigate, user?.displayName]);
 
+  // Brouillon local : copie de la saisie dans le navigateur toutes les 2 s (coupure réseau, plantage, onglet fermé
+  // en édition seule). Proposé à la réouverture de la page ; effacé à l'enregistrement ou à l'abandon.
+  useEffect(() => {
+    if (!editing || !dirty || !draft) return undefined;
+    const t = setTimeout(() => writeLocalDraft(id, { ...draft, version: page?.version }), 2000);
+    return () => clearTimeout(t);
+  }, [editing, dirty, draft, id, page?.version]);
+  const [localDraft, setLocalDraft] = useState(null);
+  useEffect(() => { setLocalDraft(readLocalDraft(id)); }, [id]);
+  const resumeDraft = () => {
+    const d = localDraft;
+    setLocalDraft(null);
+    startEdit({ ...page, title: d.title, icon: d.icon, content: d.content });
+    setDirty(true);
+    if (d.version !== page.version) setNotice('La page a été modifiée depuis ce brouillon : relisez avant d\'enregistrer (la version actuelle reste dans l\'historique).');
+  };
+  const dropDraft = () => { clearLocalDraft(id); setLocalDraft(null); };
+
   // Protection contre la perte de saisie
   useEffect(() => {
     if (!dirty) return undefined;
@@ -459,14 +494,15 @@ export function WikiPage({ user }) {
     setDraft({ title: p.title, icon: p.icon ?? null, content: p.content });
     setDirty(false); setConflict(null); setNotice(null); setSession(null); setEditing(true);
     if (!user) { setSession(false); return; }
-    openCollab(p.id, user, {
+    loadCollab().then((m) => m.openCollab(p.id, user, {
       onPeers: setPeers,
       onReset: () => {
         closeSession(); setEditing(false); setDirty(false);
         setNotice('La page a été restaurée ou placée dans la corbeille par un autre utilisateur : l\'édition a été fermée.');
         load();
       },
-    }).then((s) => {
+    }).then((s) => ({ s, ext: { Collaboration: m.Collaboration, CollaborationCaret: m.CollaborationCaret } }))).then(({ s, ext }) => {
+      s.extensions = ext;
       if (!editingRef.current) { s.close(); return; }
       if (s.seed) { s.meta.set('title', p.title); s.meta.set('icon', p.icon ?? ''); } else {
         setDraft((d) => ({ ...d, title: s.meta.get('title') ?? d.title, icon: s.meta.get('icon') || null }));
@@ -484,10 +520,11 @@ export function WikiPage({ user }) {
 
   const cancel = () => {
     const msg = peers.length
-      ? 'Quitter l\'édition ? Vos modifications non enregistrées restent visibles des autres éditeurs, qui peuvent les enregistrer.'
+      ? 'Quitter l\'édition ? Les modifications restent dans le document partagé : elles seront enregistrées par les autres éditeurs ou automatiquement au départ du dernier.'
       : 'Abandonner vos modifications ?';
     if ((dirty || peers.length) && !window.confirm(msg)) return;
-    closeSession(); setEditing(false); setDirty(false); setConflict(null); setNotice(null);
+    // Seul éditeur : abandon explicite, rien n'est enregistré automatiquement
+    closeSession({ discard: !peers.length }); clearLocalDraft(id); setEditing(false); setDirty(false); setConflict(null); setNotice(null);
   };
 
   const save = async (version = page.version, retried = false) => {
@@ -495,7 +532,7 @@ export function WikiPage({ user }) {
     try {
       const r = await api.patch(`/wiki/pages/${id}`, { version, title: draft.title.trim() || 'Sans titre', icon: draft.icon || null, content: draft.content });
       setPage((p) => ({ ...p, ...r.page }));
-      closeSession(); setEditing(false); setDirty(false); setConflict(null); setNotice(null);
+      closeSession(); clearLocalDraft(id); setEditing(false); setDirty(false); setConflict(null); setNotice(null);
     } catch (x) {
       if (x.status === 409 && x.code === 'WIKI_CONFLICT') {
         // En co-édition, l'autre enregistrement porte sur le même document partagé : on enregistre par-dessus
@@ -516,7 +553,7 @@ export function WikiPage({ user }) {
     const latest = (await api.get(`/wiki/pages/${id}`)).page;
     await save(latest.version); // la version de l'autre utilisateur reste dans l'historique
   };
-  const discardMine = async () => { closeSession(); setEditing(false); setDirty(false); setConflict(null); await load(); };
+  const discardMine = async () => { closeSession({ discard: !peers.length }); clearLocalDraft(id); setEditing(false); setDirty(false); setConflict(null); await load(); };
 
   const uploadFile = async (file) => {
     try {
@@ -541,7 +578,7 @@ export function WikiPage({ user }) {
   if (!page) return error ? <div className="p-6"><ErrorBox error={error} /></div> : <Loading />;
   const canEdit = page.myRole !== 'VIEWER' && !page.deletedAt;
   const isOwner = page.myRole === 'OWNER';
-  const collab = session ? { ydoc: session.ydoc, provider: session.provider, seed: session.seed, user: { name: user.displayName, color: colorOf(user.id) } } : undefined;
+  const collab = session ? { ydoc: session.ydoc, provider: session.provider, seed: session.seed, extensions: session.extensions, user: { name: user.displayName, color: colorOf(user.id) } } : undefined;
 
   return (
     <WikiShell workspaceId={page.workspaceId} currentId={page.id} ancestorIds={page.breadcrumb.map((b) => b.id)} onEvent={onEvent}>
@@ -572,6 +609,15 @@ export function WikiPage({ user }) {
                   </div>
                 </div>
               )}
+              {localDraft && !editing && canEdit && (
+                <div role="status" className="mb-4 p-3 rounded-md bg-amber-50 dark:bg-amber-900/30 text-amber-900 dark:text-amber-100 text-sm flex flex-wrap justify-between items-center gap-2">
+                  <span>Un brouillon non enregistré du {fmt(localDraft.at)} existe pour cette page sur ce poste.</span>
+                  <span className="flex gap-2">
+                    <button type="button" className={btnPrimary} onClick={resumeDraft}>Reprendre le brouillon</button>
+                    <button type="button" className={btnGhost} onClick={dropDraft}>Supprimer</button>
+                  </span>
+                </div>
+              )}
               {notice && !conflict && (
                 <div role="status" className="mb-4 p-3 rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 text-sm flex justify-between gap-2">
                   <span>{notice}</span><button type="button" onClick={() => setNotice(null)} aria-label="Fermer le message"><X size={14} /></button>
@@ -589,6 +635,9 @@ export function WikiPage({ user }) {
                 <div className="flex flex-wrap items-center gap-1 kz-noprint">
                   {editing ? <>
                     <Peers peers={peers} />
+                    <span role="status" aria-live="polite" className={`text-xs mr-1 ${dirty ? 'text-amber-700 dark:text-amber-300' : 'text-gray-500'}`}>
+                      {saving ? '' : dirty ? (session ? 'Non enregistré (sauvegarde auto. à la fermeture)' : 'Modifications non enregistrées') : 'Aucune modification'}
+                    </span>
                     <button type="button" className={btnPrimary} onClick={() => save()} disabled={saving || session === null}><Save size={16} /> {saving ? 'Enregistrement…' : 'Enregistrer'}</button>
                     <button type="button" className={btnGhost} onClick={cancel}><X size={16} /> {peers.length ? 'Quitter' : 'Annuler'}</button>
                   </> : <>
@@ -644,7 +693,7 @@ export function WikiPage({ user }) {
                   <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-2">Sous-pages</h2>
                   <ul className="grid sm:grid-cols-2 gap-2">
                     {page.children.map((c) => (
-                      <li key={c.id}><Link to={`/wiki/${c.id}`} className={`${card} flex items-center gap-2 px-3 py-2 text-sm hover:shadow-sm text-gray-800 dark:text-gray-200`}><FileText size={14} className="text-gray-400" /> {c.icon ? `${c.icon} ` : ''}{c.title}</Link></li>
+                      <li key={c.id}><Link to={`/wiki/${c.id}`} className={`${card} flex items-center gap-2 px-3 py-2 text-sm hover:shadow-sm text-gray-800 dark:text-gray-200`}><FileText size={14} className="text-gray-500 dark:text-gray-400" /> {c.icon ? `${c.icon} ` : ''}{c.title}</Link></li>
                     ))}
                   </ul>
                 </section>

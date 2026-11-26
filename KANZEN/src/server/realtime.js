@@ -6,6 +6,11 @@ function parseCookies(header = '') {
     .map(([k, v]) => [k, decodeURIComponent(v)]));
 }
 
+const originOf = (req) => {
+  const v = req?.headers?.['x-socket-id'];
+  return typeof v === 'string' && /^[\w-]{1,64}$/.test(v) ? v : null;
+};
+
 export function attachRealtime(fastify, { sessions, authz, cfg }) {
   const io = new Server(fastify.server, {
     path: '/socket.io',
@@ -58,7 +63,9 @@ export function attachRealtime(fastify, { sessions, authz, cfg }) {
 
   return {
     io,
-    boardChanged: (boardId, reason) => io.to(`board:${boardId}`).emit('board:updated', { boardId, reason }),
+    // origin : identifiant de la websocket de l'auteur (en-tête X-Socket-Id), pour qu'il ignore l'écho
+    // d'une modification déjà appliquée chez lui (mise à jour optimiste)
+    boardChanged: (boardId, reason, req) => io.to(`board:${boardId}`).emit('board:updated', { boardId, reason, origin: originOf(req) }),
     wikiChanged: (workspaceId, event) => io.to(`wiki:${workspaceId}`).emit('wiki:changed', { workspaceId, ...event }),
   };
 }

@@ -35,7 +35,7 @@ export function Avatars({ users, max = 4 }) {
   );
 }
 
-export function TaskCard({ task, onOpen, disabled }) {
+export function TaskCard({ task, onOpen, disabled, done: inDoneColumn = false }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id, data: { type: 'task', columnId: task.columnId }, disabled,
   });
@@ -43,13 +43,16 @@ export function TaskCard({ task, onOpen, disabled }) {
   const subtasks = task.subtasks ?? [];
   const done = subtasks.filter((s) => s.completed).length;
   const progress = subtasks.length ? Math.round((done / subtasks.length) * 100) : 0;
-  const late = task.dueDate && isPast(new Date(task.dueDate));
+  // Pas de badge « en retard » dans la dernière colonne (terminé) : même règle que les statistiques du serveur
+  const late = !inDoneColumn && task.dueDate && isPast(new Date(task.dueDate));
 
   return (
     <div
       ref={setNodeRef} style={style} {...attributes} {...listeners}
       onClick={() => onOpen(task.id)}
-      onKeyDown={(e) => e.key === 'Enter' && onOpen(task.id)}
+      // Entrée ouvre la carte ; Espace la déplace (capteur clavier de dnd-kit, cf. KanbanBoard)
+      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onOpen(task.id); } }}
+      aria-label={`${task.title}${task.dueDate ? `, échéance ${format(new Date(task.dueDate), 'd MMMM', { locale: fr })}${late ? ', en retard' : ''}` : ''}${task.assignees?.length ? `, assignée à ${task.assignees.map((u) => u.displayName).join(', ')}` : ''}`}
       className={`p-3 mb-2 rounded-lg border shadow-sm hover:shadow-md transition-shadow ${disabled ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'} ${COLORS[task.color] ?? COLORS.white}`}
     >
       <div className="flex justify-between items-start gap-2 mb-1">
@@ -68,7 +71,7 @@ export function TaskCard({ task, onOpen, disabled }) {
           <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5"><div className="bg-indigo-500 h-1.5 rounded-full" style={{ width: `${progress}%` }} /></div>
         </div>
       )}
-      <div className="flex items-center justify-between mt-2 text-xs text-gray-400">
+      <div className="flex items-center justify-between mt-2 text-xs text-gray-500 dark:text-gray-400">
         <span className="flex gap-3">
           {task._count?.attachments > 0 && <span className="flex items-center gap-1"><Paperclip size={12} /> {task._count.attachments}</span>}
           {task._count?.comments > 0 && <span className="flex items-center gap-1"><MessageSquare size={12} /> {task._count.comments}</span>}

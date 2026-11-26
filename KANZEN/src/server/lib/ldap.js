@@ -16,6 +16,18 @@ function guidToString(buf) {
 }
 const first = (v) => (Array.isArray(v) ? v[0] : v);
 
+/** GUID texte (format de guidToString) -> filtre LDAP binaire échappé (\\xx par octet, ordre de stockage AD). */
+export function guidToFilter(guid) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(guid ?? '')) return null;
+  const h = guid.replace(/-/g, '').toLowerCase();
+  const le = (x) => x.match(/../g).reverse().join('');
+  const bytes = le(h.slice(0, 8)) + le(h.slice(8, 12)) + le(h.slice(12, 16)) + h.slice(16);
+  return bytes.match(/../g).map((b) => `\\${b}`).join('');
+}
+
+const USER_ATTRS = ['dn', 'sAMAccountName', 'displayName', 'mail', 'objectGUID', 'userAccountControl'];
+const DISABLED = '(userAccountControl:1.2.840.113556.1.4.803:=2)'; // bit ACCOUNTDISABLE
+
 export function createLdapAuthenticator(ldapCfg, log) {
   const tlsOptions = {
     minVersion: 'TLSv1.2',
@@ -58,7 +70,7 @@ export function createLdapAuthenticator(ldapCfg, log) {
           scope: 'sub',
           filter,
           sizeLimit: 2,
-          attributes: ['dn', 'sAMAccountName', 'displayName', 'mail', 'objectGUID', 'userAccountControl'],
+          attributes: USER_ATTRS,
           explicitBufferAttributes: ['objectGUID'],
         });
         if (searchEntries.length !== 1) throw final('not_found');
@@ -124,5 +136,70 @@ export function createLdapAuthenticator(ldapCfg, log) {
     });
   }
 
-  return { authenticate, diagnose };
+  // --- Annuaire : recherche (ajout de membres) et synchronisation (arrivées / départs) ---
+  const inGroups = () => {
+    const parts = [ldapCfg.groupUsers, ldapCfg.groupAdmins].filter(Boolean).map((g) => `(memberOf:${IN_CHAIN}:=${escapeFilter(g)})`);
+    return parts.length === 1 ? parts[0] : `(|${parts.join('')})`;
+  };
+  const toProfile = (entry, isAdmin = false) => ({
+    username: String(first(entry.sAMAccountName) ?? '').toLowerCase(),
+    displayName: String(first(entry.displayName) ?? first(entry.sAMAccountName) ?? ''),
+    email: first(entry.mail) ? String(first(entry.mail)) : null,
+    externalId: guidToString(first(entry.objectGUID)) ?? entry.dn,
+    isAdmin,
+  });
+  const ACTIVE_PERSON = `(objectCategory=person)(objectClass=user)(!${DISABLED})`;
+
+  /** Comptes AD actifs, membres du groupe d'accès, dont l'identifiant ou le nom contient « q » (20 au plus). */
+  async function searchUsers(q) {
+    const e = escapeFilter(q);
+    return withClient(async (client) => {
+      await client.bind(ldapCfg.bindDn, ldapCfg.bindPassword);
+      const { searchEntries } = await client.search(ldapCfg.baseDn, {
+        scope: 'sub',
+        filter: `(&${ACTIVE_PERSON}${inGroups()}(|(sAMAccountName=*${e}*)(displayName=*${e}*)(mail=*${e}*)))`,
+        sizeLimit: 20,
+        attributes: USER_ATTRS,
+        explicitBufferAttributes: ['objectGUID'],
+      });
+      return searchEntries.map((x) => toProfile(x)).filter((p) => p.username);
+    });
+  }
+
+  /** Profil d'un compte AD actif ET membre du groupe d'accès, par objectGUID ; null sinon. */
+  async function findByGuid(guid) {
+    const g = guidToFilter(guid);
+    if (!g) return null;
+    return withClient(async (client) => {
+      await client.bind(ldapCfg.bindDn, ldapCfg.bindPassword);
+      const { searchEntries } = await client.search(ldapCfg.baseDn, {
+        scope: 'sub', filter: `(&${ACTIVE_PERSON}(objectGUID=${g})${inGroups()})`, sizeLimit: 2, attributes: USER_ATTRS, explicitBufferAttributes: ['objectGUID'],
+      });
+      if (searchEntries.length !== 1) return null;
+      const admins = ldapCfg.groupAdmins ? (await client.search(searchEntries[0].dn, { scope: 'base', filter: `(memberOf:${IN_CHAIN}:=${escapeFilter(ldapCfg.groupAdmins)})`, attributes: ['dn'] })).searchEntries.length === 1 : false;
+      return toProfile(searchEntries[0], admins);
+    });
+  }
+
+  /**
+   * Tous les comptes AD actifs autorisés (groupe d'accès ou groupe admin, appartenance récursive), indexés par objectGUID.
+   * Lève une exception si l'annuaire est injoignable : l'appelant ne doit alors rien désactiver.
+   */
+  async function listAuthorized() {
+    return withClient(async (client) => {
+      await client.bind(ldapCfg.bindDn, ldapCfg.bindPassword);
+      const opts = { scope: 'sub', paged: { pageSize: 500 }, attributes: USER_ATTRS, explicitBufferAttributes: ['objectGUID'] };
+      const admins = new Set();
+      if (ldapCfg.groupAdmins) {
+        const r = await client.search(ldapCfg.baseDn, { ...opts, filter: `(&${ACTIVE_PERSON}(memberOf:${IN_CHAIN}:=${escapeFilter(ldapCfg.groupAdmins)}))` });
+        for (const x of r.searchEntries) admins.add(toProfile(x).externalId);
+      }
+      const r = await client.search(ldapCfg.baseDn, { ...opts, filter: `(&${ACTIVE_PERSON}${inGroups()})` });
+      const out = new Map();
+      for (const x of r.searchEntries) { const p = toProfile(x); out.set(p.externalId, { ...p, isAdmin: admins.has(p.externalId) }); }
+      return out;
+    });
+  }
+
+  return { authenticate, diagnose, searchUsers, findByGuid, listAuthorized };
 }

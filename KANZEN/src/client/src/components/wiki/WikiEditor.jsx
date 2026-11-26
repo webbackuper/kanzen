@@ -9,8 +9,6 @@ import { TaskList, TaskItem } from '@tiptap/extension-list';
 import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
 import { Details, DetailsSummary, DetailsContent } from '@tiptap/extension-details';
 import { Placeholder } from '@tiptap/extensions';
-import { Collaboration } from '@tiptap/extension-collaboration';
-import { CollaborationCaret } from '@tiptap/extension-collaboration-caret';
 import {
   Bold, Italic, Strikethrough, Underline, Code, Highlighter, Heading1, Heading2, Heading3, List, ListOrdered, ListChecks,
   Quote, SquareCode, Minus, Link2, ImagePlus, Table as TableIcon, Undo2, Redo2, Columns3, Rows3, Trash2, Paperclip,
@@ -76,8 +74,8 @@ function buildExtensions({ placeholder, collab, pickRef, pagesRef }) {
     SlashCommands.configure({ items: () => slashItems((kind) => pickRef.current?.(kind)) }),
     WikiLinks.configure({ pages: () => pagesRef.current ?? [] }),
     ...(collab ? [
-      Collaboration.configure({ document: collab.ydoc }),
-      CollaborationCaret.configure({ provider: collab.provider, user: collab.user }),
+      collab.extensions.Collaboration.configure({ document: collab.ydoc }),
+      collab.extensions.CollaborationCaret.configure({ provider: collab.provider, user: collab.user }),
     ] : []),
   ];
 }

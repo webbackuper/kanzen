@@ -21,7 +21,27 @@ L'utilisateur saisit simplement son identifiant : `jdupont`, `CORP\jdupont` ou `
 4. Contrôle d'appartenance **récursive** (groupes imbriqués, `LDAP_MATCHING_RULE_IN_CHAIN 1.2.840.113556.1.4.1941`) à `GG_KanZen_Admins`, puis à `GG_KanZen_Users`.
 5. **Bind avec le DN de l'utilisateur et son mot de passe** : c'est l'AD qui valide le mot de passe et applique sa propre politique de verrouillage. Un mot de passe vide est refusé avant tout appel, pour bloquer l'*unauthenticated bind*.
 6. Provisionnement ou mise à jour du compte dans KanZen (clé stable : `objectGUID`). Le rôle est **recalculé à chaque connexion** : `GG_KanZen_Admins` donne ADMIN, `GG_KanZen_Users` donne USER.
-7. Retirer l'utilisateur des groupes coupe l'accès dès sa connexion suivante et ferme ses sessions. Une session déjà ouverte expire au plus tard après `SESSION_TTL_HOURS`. Pour une coupure immédiate : **Comptes**, puis « Fermer ses sessions ».
+7. Retirer l'utilisateur des groupes coupe l'accès : à sa connexion suivante, et **au plus tard au passage suivant de la synchronisation AD** (15 minutes par défaut, voir ci-dessous), qui désactive le compte et ferme ses sessions. Pour une coupure immédiate : `kanzenctl ad-sync`, ou **Comptes**, puis « Fermer ses sessions ».
+
+## Arrivées : ajouter un agent qui ne s'est jamais connecté
+
+Quand l'AD est actif, la recherche de membres d'un espace interroge aussi l'annuaire (dès 3 caractères, 20 résultats au plus), **limitée aux comptes actifs membres de `GG_KanZen_Users` ou `GG_KanZen_Admins`** : KanZen ne sert pas d'annuaire de tout le domaine. Ces agents apparaissent avec la mention « annuaire AD ». À l'ajout, le compte KanZen est créé (`POST /api/users/provision`) après une nouvelle vérification côté serveur (compte actif, membre du groupe, recherche par `objectGUID`), avec une entrée d'audit `user.provision`. Seuls un administrateur ou le propriétaire d'au moins un espace peuvent déclencher cette création (30 par minute au plus).
+
+## Départs et mutations : synchronisation AD
+
+Le service lance une synchronisation toutes les `AD_SYNC_INTERVAL_MINUTES` minutes (15 par défaut, `0` pour la désactiver), et `kanzenctl ad-sync` la lance à la demande. Pour chaque compte AD connu de KanZen :
+
+| Situation dans l'AD | Effet dans KanZen | Audit |
+|---|---|---|
+| Retiré des groupes, désactivé (`userAccountControl` & 2) ou supprimé | Compte **désactivé** (`disabledReason = AD_SYNC`), **sessions révoquées immédiatement** | `user.deprovision` |
+| De retour dans un groupe | Compte réactivé, s'il avait été désactivé par la synchronisation | `user.reprovision` |
+| Changement de nom, d'e-mail ou de groupe admin | Profil et rôle mis à jour | `user.role_sync` pour le rôle |
+
+Une désactivation décidée par un administrateur KanZen n'est **jamais** levée par la synchronisation.
+
+**Garde-fous :** rien n'est désactivé si l'annuaire est injoignable, s'il ne renvoie aucun membre, ou si la synchronisation désactiverait plus de la moitié des comptes AD actifs (au-delà de 5). Ce cas signale presque toujours une erreur de `LDAP_GROUP_USERS` ou de `LDAP_BASE_DN` : le motif est journalisé (`directory.sync`, échec) et rien n'est modifié. Après vérification, `kanzenctl ad-sync --force` lève le garde-fou.
+
+Le compte de service n'a besoin que de la lecture : recherche paginée des membres (appartenance récursive) dans `LDAP_BASE_DN`.
 
 Si plusieurs URL sont configurées (`LDAP_URL` séparées par des virgules), KanZen bascule sur le contrôleur de domaine suivant en cas d'indisponibilité réseau.
 

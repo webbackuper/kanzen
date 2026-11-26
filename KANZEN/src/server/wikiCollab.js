@@ -1,8 +1,10 @@
 // Co-édition des pages du wiki : un document Yjs par page ouverte en édition, relayé par Socket.io.
 // Le serveur garde l'état en mémoire tant qu'au moins un éditeur est connecté ; l'enregistrement reste
-// explicite (PATCH /wiki/pages/:id, validé par sanitizeDoc). Quand le dernier éditeur part, le document
-// en mémoire est oublié et la session suivante repart du contenu enregistré.
+// explicite (PATCH /wiki/pages/:id, validé par sanitizeDoc). Quand le dernier éditeur part alors que le document
+// partagé contient des modifications non enregistrées, elles sont enregistrées automatiquement (onAbandon) :
+// fermer l'onglet ne fait plus perdre le travail. Seul un abandon explicite (« Annuler ») les écarte.
 import * as Y from 'yjs';
+import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as awarenessProtocol from 'y-protocols/awareness';
 
 const MAX_UPDATE = 2 * 1024 * 1024;
@@ -19,7 +21,7 @@ function bytes(v) {
   return u.byteLength > 0 && u.byteLength <= MAX_UPDATE ? u : null;
 }
 
-export function attachWikiCollab({ io, prisma, access }) {
+export function attachWikiCollab({ io, prisma, access, onAbandon, log }) {
   /** pageId -> { doc, awareness, seeded, seeder, sockets: Map<socketId, Set<clientId>> } */
   const rooms = new Map();
 
@@ -29,13 +31,13 @@ export function attachWikiCollab({ io, prisma, access }) {
       const doc = new Y.Doc();
       const awareness = new awarenessProtocol.Awareness(doc);
       awareness.setLocalState(null); // le serveur n'a pas de présence propre
-      r = { doc, awareness, seeded: false, seeder: null, sockets: new Map() };
+      r = { doc, awareness, seeded: false, seeder: null, sockets: new Map(), dirty: false, lastEditor: null };
       rooms.set(pageId, r);
     }
     return r;
   }
 
-  function leave(socket, pageId) {
+  function leave(socket, pageId, { discard = false } = {}) {
     const r = rooms.get(pageId);
     if (!r || !r.sockets.has(socket.id)) return;
     const clients = [...r.sockets.get(socket.id)];
@@ -47,6 +49,17 @@ export function attachWikiCollab({ io, prisma, access }) {
     }
     if (r.seeder === socket.id && !r.seeded) r.seeder = null;
     if (r.sockets.size === 0) {
+      if (r.dirty && !discard && onAbandon) {
+        // Dernier éditeur parti sans enregistrer : enregistrement automatique (contenu revalidé par l'appelant)
+        const meta = r.doc.getMap('meta');
+        const snapshot = {
+          content: yXmlFragmentToProsemirrorJSON(r.doc.getXmlFragment('default')),
+          title: meta.get('title'),
+          icon: meta.get('icon'),
+        };
+        Promise.resolve(onAbandon(pageId, snapshot, r.lastEditor ?? socket.data.user))
+          .catch((err) => log?.error({ err, pageId }, 'enregistrement automatique du wiki'));
+      }
       r.awareness.destroy();
       r.doc.destroy();
       rooms.delete(pageId);
@@ -90,7 +103,7 @@ export function attachWikiCollab({ io, prisma, access }) {
       } catch {
         return; // mise à jour illisible : ignorée
       }
-      if (!r.seeded) { r.seeded = true; r.seeder = null; }
+      if (!r.seeded) { r.seeded = true; r.seeder = null; } else { r.dirty = true; r.lastEditor = socket.data.user; }
       socket.to(room(pageId)).emit('wiki-collab:update', { pageId, update });
     });
 
@@ -111,7 +124,8 @@ export function attachWikiCollab({ io, prisma, access }) {
       socket.to(room(pageId)).emit('wiki-collab:awareness', { pageId, update });
     });
 
-    socket.on('wiki-collab:leave', (msg) => { if (typeof msg?.pageId === 'string') leave(socket, msg.pageId); });
+    // discard : abandon explicite des modifications (bouton « Annuler ») ; sans effet s'il reste d'autres éditeurs
+    socket.on('wiki-collab:leave', (msg) => { if (typeof msg?.pageId === 'string') leave(socket, msg.pageId, { discard: msg.discard === true }); });
     socket.on('disconnect', () => { for (const pageId of [...rooms.keys()]) leave(socket, pageId); });
   });
 
@@ -126,6 +140,11 @@ export function attachWikiCollab({ io, prisma, access }) {
         if (s) leave(s, pageId);
       }
       if (rooms.get(pageId) === r) { r.awareness.destroy(); r.doc.destroy(); rooms.delete(pageId); }
+    },
+    /** Contenu enregistré par un éditeur (PATCH) : plus rien à enregistrer automatiquement pour l'instant. */
+    saved(pageId) {
+      const r = rooms.get(pageId);
+      if (r) r.dirty = false;
     },
     /** Nombre d'éditeurs connectés (diagnostic et tests). */
     editors: (pageId) => rooms.get(pageId)?.sockets.size ?? 0,

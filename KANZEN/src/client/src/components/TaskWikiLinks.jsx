@@ -34,7 +34,7 @@ export function TaskWikiLinks({ taskId, workspaceId }) {
         {data.pages.map((p) => (
           <li key={p.id} className="flex items-center gap-2 text-sm dark:text-gray-200">
             <Link to={`/wiki/${p.id}`} className="truncate hover:underline">{p.icon ? `${p.icon} ` : ''}{p.title}</Link>
-            {data.canEdit && <button type="button" className="ml-auto text-gray-400 hover:text-red-600" onClick={() => unlink(p)} aria-label={`Retirer le lien avec ${p.title}`} title="Retirer le lien"><Unlink size={12} /></button>}
+            {data.canEdit && <button type="button" className="ml-auto text-gray-500 dark:text-gray-400 hover:text-red-600" onClick={() => unlink(p)} aria-label={`Retirer le lien avec ${p.title}`} title="Retirer le lien"><Unlink size={12} /></button>}
           </li>
         ))}
       </ul>
