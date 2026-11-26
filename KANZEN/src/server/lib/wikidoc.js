@@ -226,3 +226,23 @@ export function docToMarkdown(title, doc, options = {}) {
     fileUrl = (src) => src;
   }
 }
+
+/**
+ * Copie du document où les fichiers du wiki sont renvoyés vers d'autres identifiants (`map` : ancien → nouveau).
+ * Un fichier absent de `map` est retiré du document (modèle de page, copie dont le fichier a disparu).
+ */
+export function remapFiles(doc, map) {
+  const walk = (n) => {
+    if (n.type === 'image' || n.type === 'fileAttachment') {
+      const m = WIKI_FILE_SRC.exec(n.attrs?.src ?? '');
+      if (!m || !map.has(m[1])) return null;
+      return { ...n, attrs: { ...n.attrs, src: `/api/wiki/files/${map.get(m[1])}` } };
+    }
+    if (!n.content) return n;
+    const content = n.content.map(walk).filter(Boolean);
+    // Un bloc vidé de son unique fichier garde un paragraphe pour rester valide
+    if (!content.length && n.content.length && n.type !== 'paragraph') return { ...n, content: [{ type: 'paragraph' }] };
+    return { ...n, content };
+  };
+  return walk(doc);
+}

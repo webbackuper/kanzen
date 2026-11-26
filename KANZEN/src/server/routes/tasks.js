@@ -1,18 +1,32 @@
-import { badRequest, forbidden } from '../lib/errors.js';
+import { badRequest, conflict, forbidden } from '../lib/errors.js';
 
 const uuid = { type: 'string', format: 'uuid' };
 const idParam = { type: 'object', required: ['id'], properties: { id: uuid } };
 const COLORS = ['white', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray'];
+export const PRIORITIES = ['NONE', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+const uuidList = (max) => ({ type: 'array', maxItems: max, uniqueItems: true, items: uuid });
 const taskProps = {
   title: { type: 'string', minLength: 1, maxLength: 300 },
   description: { type: 'string', maxLength: 20000 },
   color: { enum: COLORS },
   dueDate: { type: ['string', 'null'], format: 'date-time' },
+  startDate: { type: ['string', 'null'], format: 'date-time' },
+  priority: { enum: PRIORITIES },
   // Affectation multiple : liste complète des assignés (remplace la liste existante)
-  assigneeIds: { type: 'array', maxItems: 25, uniqueItems: true, items: { type: 'string', format: 'uuid' } },
+  assigneeIds: uuidList(25),
+  // Étiquettes du tableau : liste complète (remplace la liste existante)
+  labelIds: uuidList(20),
 };
-const assigneesInclude = { assignees: { orderBy: { assignedAt: 'asc' }, select: { user: { select: { id: true, username: true, displayName: true } } } } };
-const flatAssignees = (t) => ({ ...t, assignees: (t.assignees ?? []).map((a) => a.user) });
+const userSel = { select: { id: true, username: true, displayName: true } };
+const assigneesInclude = { assignees: { orderBy: { assignedAt: 'asc' }, select: { user: userSel } } };
+const labelsInclude = { labels: { select: { labelId: true } } };
+const taskInclude = { ...assigneesInclude, ...labelsInclude };
+const flatTask = (t) => ({
+  ...t,
+  assignees: (t.assignees ?? []).map((a) => a.user),
+  ...(t.labels ? { labels: undefined, labelIds: t.labels.map((l) => l.labelId) } : {}),
+});
+const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : null);
 
 // Écart minimal entre deux positions voisines. En dessous, la précision d'un double ne garantit plus un ordre
 // stable (après ~50 insertions au même endroit) : la colonne est alors renumérotée par pas de STEP.
@@ -45,6 +59,7 @@ export default async function taskRoutes(app) {
   const auth = { onRequest: [app.requireUser] };
   const boardOfColumn = async (columnId) => (await prisma.column.findUnique({ where: { id: columnId }, select: { boardId: true } })).boardId;
   const boardOfTask = async (taskId) => (await prisma.task.findUnique({ where: { id: taskId }, select: { column: { select: { boardId: true } } } })).column.boardId;
+  const activity = (taskId, actorId, type, data) => prisma.taskActivity.create({ data: { taskId, actorId, type, ...(data ? { data } : {}) } });
 
   // Chaque assigné doit être un compte actif membre de l'espace
   async function checkAssignees(workspaceId, ids) {
@@ -55,29 +70,70 @@ export default async function taskRoutes(app) {
       if (u.disabled || !(await authz.workspaceRole(u, workspaceId))) throw badRequest(`${u.displayName} n'est pas membre de l'espace`);
     }
   }
-  const toData = ({ assigneeIds, ...b }) => ({
+  // Les étiquettes doivent appartenir au tableau de la tâche
+  async function checkLabels(boardId, ids) {
+    if (!ids?.length) return;
+    const n = await prisma.label.count({ where: { id: { in: ids }, boardId } });
+    if (n !== ids.length) throw badRequest('Étiquette inconnue sur ce tableau');
+  }
+  function checkDates(startDate, dueDate) {
+    if (startDate && dueDate && new Date(startDate) > new Date(dueDate)) throw badRequest('La date de début doit précéder l\'échéance');
+  }
+  const date = (v) => (v ? new Date(v) : null);
+  const toData = ({ assigneeIds, labelIds, ...b }) => ({
     ...b,
-    ...(b.dueDate !== undefined ? { dueDate: b.dueDate ? new Date(b.dueDate) : null } : {}),
+    ...(b.dueDate !== undefined ? { dueDate: date(b.dueDate) } : {}),
+    ...(b.startDate !== undefined ? { startDate: date(b.startDate) } : {}),
     ...(assigneeIds !== undefined ? { assignees: { deleteMany: {}, create: assigneeIds.map((userId) => ({ userId })) } } : {}),
+    ...(labelIds !== undefined ? { labels: { deleteMany: {}, create: labelIds.map((labelId) => ({ labelId })) } } : {}),
   });
+
+  /** Résumé lisible des champs modifiés, pour le journal d'activité. */
+  async function describeChanges(before, after) {
+    const changes = [];
+    if (before.title !== after.title) changes.push({ field: 'title', from: before.title, to: after.title });
+    if (before.description !== after.description) changes.push({ field: 'description' });
+    if (before.color !== after.color) changes.push({ field: 'color', from: before.color, to: after.color });
+    if (before.priority !== after.priority) changes.push({ field: 'priority', from: before.priority, to: after.priority });
+    if (day(before.dueDate) !== day(after.dueDate)) changes.push({ field: 'dueDate', from: day(before.dueDate), to: day(after.dueDate) });
+    if (day(before.startDate) !== day(after.startDate)) changes.push({ field: 'startDate', from: day(before.startDate), to: day(after.startDate) });
+    const diffIds = (a, b) => ({ added: b.filter((x) => !a.includes(x)), removed: a.filter((x) => !b.includes(x)) });
+    const a = diffIds(before.assignees.map((u) => u.id), after.assignees.map((u) => u.id));
+    if (a.added.length || a.removed.length) {
+      const names = new Map([...before.assignees, ...after.assignees].map((u) => [u.id, u.displayName]));
+      changes.push({ field: 'assignees', added: a.added.map((id) => names.get(id)), removed: a.removed.map((id) => names.get(id)) });
+    }
+    const l = diffIds(before.labelIds, after.labelIds);
+    if (l.added.length || l.removed.length) {
+      const labels = await prisma.label.findMany({ where: { id: { in: [...l.added, ...l.removed] } }, select: { id: true, name: true } });
+      const n = new Map(labels.map((x) => [x.id, x.name]));
+      changes.push({ field: 'labels', added: l.added.map((id) => n.get(id)), removed: l.removed.map((id) => n.get(id)) });
+    }
+    return changes;
+  }
 
   app.post('/columns/:id/tasks', {
     ...auth,
     schema: { params: idParam, body: { type: 'object', required: ['title'], additionalProperties: false, properties: taskProps } },
   }, async (req, reply) => {
     const { workspaceId } = await authz.check(req.user, 'column', req.params.id, 'EDITOR');
+    const boardId = await boardOfColumn(req.params.id);
     await checkAssignees(workspaceId, req.body.assigneeIds);
+    await checkLabels(boardId, req.body.labelIds);
+    checkDates(req.body.startDate, req.body.dueDate);
     const last = await prisma.task.findFirst({ where: { columnId: req.params.id }, orderBy: { position: 'desc' } });
-    const { assignees, ...data } = toData(req.body);
-    const task = flatAssignees(await prisma.task.create({
+    const { assignees, labels, ...data } = toData(req.body);
+    const task = flatTask(await prisma.task.create({
       data: {
         ...data, columnId: req.params.id, position: (last?.position ?? 0) + 1000, createdById: req.user.id,
         ...(assignees ? { assignees: { create: assignees.create } } : {}),
+        ...(labels ? { labels: { create: labels.create } } : {}),
       },
-      include: assigneesInclude,
+      include: taskInclude,
     }));
     await prisma.taskEvent.create({ data: { taskId: task.id, toColumnId: task.columnId, actorId: req.user.id } });
-    realtime.boardChanged(await boardOfColumn(task.columnId), 'task', req);
+    await activity(task.id, req.user.id, 'create');
+    realtime.boardChanged(boardId, 'task', req);
     return reply.code(201).send({ task });
   });
 
@@ -86,14 +142,21 @@ export default async function taskRoutes(app) {
     const task = await prisma.task.findUnique({
       where: { id: req.params.id },
       include: {
-        ...assigneesInclude,
+        ...taskInclude,
+        column: { select: { id: true, title: true, boardId: true, board: { select: { labels: { orderBy: { position: 'asc' } } } } } },
         createdBy: { select: { id: true, displayName: true } },
         subtasks: { orderBy: { position: 'asc' } },
         comments: { orderBy: { createdAt: 'asc' }, include: { author: { select: { id: true, displayName: true } } } },
         attachments: { orderBy: { uploadedAt: 'asc' }, select: { id: true, filename: true, mimetype: true, size: true, uploadedAt: true } },
       },
     });
-    return { task: { ...flatAssignees(task), myRole: role } };
+    const { column, ...rest } = task;
+    return {
+      task: {
+        ...flatTask(rest), myRole: role, boardId: column.boardId,
+        column: { id: column.id, title: column.title }, boardLabels: column.board.labels,
+      },
+    };
   });
 
   app.patch('/tasks/:id', {
@@ -101,9 +164,15 @@ export default async function taskRoutes(app) {
     schema: { params: idParam, body: { type: 'object', additionalProperties: false, minProperties: 1, properties: taskProps } },
   }, async (req) => {
     const { workspaceId } = await authz.check(req.user, 'task', req.params.id, 'EDITOR');
+    const before = flatTask(await prisma.task.findUnique({ where: { id: req.params.id }, include: taskInclude }));
+    const boardId = await boardOfColumn(before.columnId);
     await checkAssignees(workspaceId, req.body.assigneeIds);
-    const task = flatAssignees(await prisma.task.update({ where: { id: req.params.id }, data: toData(req.body), include: assigneesInclude }));
-    realtime.boardChanged(await boardOfColumn(task.columnId), 'task', req);
+    await checkLabels(boardId, req.body.labelIds);
+    checkDates(req.body.startDate !== undefined ? req.body.startDate : before.startDate, req.body.dueDate !== undefined ? req.body.dueDate : before.dueDate);
+    const task = flatTask(await prisma.task.update({ where: { id: req.params.id }, data: toData(req.body), include: taskInclude }));
+    const changes = await describeChanges(before, task);
+    if (changes.length) await activity(task.id, req.user.id, 'update', { changes });
+    realtime.boardChanged(boardId, 'task', req);
     return { task };
   });
 
@@ -121,11 +190,12 @@ export default async function taskRoutes(app) {
     // sont sérialisés et ne peuvent plus calculer la même position.
     const { updated, target } = await prisma.$transaction(async (tx) => {
       const task = await tx.task.findUnique({ where: { id: req.params.id }, include: { column: true } });
+      if (task?.archivedAt) throw conflict('Cette carte est archivée');
       const target = await tx.column.findUnique({ where: { id: req.body.columnId } });
       if (!task || !target || target.boardId !== task.column.boardId) throw badRequest('Colonne cible invalide');
       await tx.$queryRaw`SELECT id FROM "Column" WHERE id = ${target.id}::uuid FOR UPDATE`;
       const siblings = await tx.task.findMany({
-        where: { columnId: target.id, id: { not: task.id } }, orderBy: [{ position: 'asc' }, { createdAt: 'asc' }], select: { id: true, position: true },
+        where: { columnId: target.id, id: { not: task.id }, archivedAt: null }, orderBy: [{ position: 'asc' }, { createdAt: 'asc' }], select: { id: true, position: true },
       });
       // Rang d'insertion : après « afterId » (carte au-dessus), sinon avant « beforeId », sinon en fin de colonne
       let index = siblings.length;
@@ -136,11 +206,112 @@ export default async function taskRoutes(app) {
       const updated = await tx.task.update({ where: { id: task.id }, data: { columnId: target.id, position } });
       if (task.columnId !== target.id) {
         await tx.taskEvent.create({ data: { taskId: task.id, fromColumnId: task.columnId, toColumnId: target.id, actorId: req.user.id } });
+        await tx.taskActivity.create({ data: { taskId: task.id, actorId: req.user.id, type: 'move', data: { from: task.column.title, to: target.title } } });
       }
       return { updated, target };
     });
     realtime.boardChanged(target.boardId, 'move', req);
     return { task: updated };
+  });
+
+  // --- Archivage (à la Trello) : la carte quitte le tableau mais reste consultable et restaurable ---
+  app.post('/tasks/:id/archive', { ...auth, schema: { params: idParam } }, async (req) => {
+    await authz.check(req.user, 'task', req.params.id, 'EDITOR');
+    const task = await prisma.task.update({ where: { id: req.params.id }, data: { archivedAt: new Date() }, select: { id: true, archivedAt: true, column: { select: { boardId: true } } } });
+    await activity(task.id, req.user.id, 'archive');
+    realtime.boardChanged(task.column.boardId, 'task', req);
+    return { task: { id: task.id, archivedAt: task.archivedAt } };
+  });
+
+  app.post('/tasks/:id/restore', { ...auth, schema: { params: idParam } }, async (req) => {
+    await authz.check(req.user, 'task', req.params.id, 'EDITOR');
+    const current = await prisma.task.findUnique({ where: { id: req.params.id }, select: { columnId: true } });
+    const last = await prisma.task.findFirst({ where: { columnId: current.columnId, archivedAt: null }, orderBy: { position: 'desc' } });
+    const task = await prisma.task.update({
+      where: { id: req.params.id }, data: { archivedAt: null, position: (last?.position ?? 0) + 1000 },
+      select: { id: true, columnId: true, column: { select: { boardId: true } } },
+    });
+    await activity(task.id, req.user.id, 'restore');
+    realtime.boardChanged(task.column.boardId, 'task', req);
+    return { task: { id: task.id, columnId: task.columnId, archivedAt: null } };
+  });
+
+  app.get('/boards/:id/archived', { ...auth, schema: { params: idParam } }, async (req) => {
+    await authz.check(req.user, 'board', req.params.id, 'VIEWER');
+    const tasks = await prisma.task.findMany({
+      where: { column: { boardId: req.params.id }, archivedAt: { not: null } },
+      orderBy: { archivedAt: 'desc' },
+      take: 500,
+      select: { id: true, title: true, color: true, archivedAt: true, dueDate: true, priority: true, column: { select: { id: true, title: true } } },
+    });
+    return { tasks };
+  });
+
+  // --- Duplication (dans la même colonne, juste en dessous) ---
+  app.post('/tasks/:id/duplicate', {
+    ...auth,
+    schema: { params: idParam, body: { type: 'object', additionalProperties: false, properties: { title: taskProps.title } } },
+  }, async (req, reply) => {
+    await authz.check(req.user, 'task', req.params.id, 'EDITOR');
+    const src = await prisma.task.findUnique({ where: { id: req.params.id }, include: { ...taskInclude, subtasks: { orderBy: { position: 'asc' } }, column: { select: { boardId: true } } } });
+    const next = await prisma.task.findFirst({ where: { columnId: src.columnId, position: { gt: src.position } }, orderBy: { position: 'asc' }, select: { position: true } });
+    const position = next ? (src.position + next.position) / 2 : src.position + 1000;
+    const copy = flatTask(await prisma.task.create({
+      data: {
+        title: req.body?.title ?? `${src.title} (copie)`.slice(0, 300),
+        description: src.description, color: src.color, priority: src.priority, dueDate: src.dueDate, startDate: src.startDate,
+        columnId: src.columnId, position, createdById: req.user.id,
+        assignees: { create: src.assignees.map((a) => ({ userId: a.user.id })) },
+        labels: { create: src.labels.map((l) => ({ labelId: l.labelId })) },
+        // La liste de contrôle est reprise, décochée : la copie sert souvent de modèle
+        subtasks: { create: src.subtasks.map((s) => ({ content: s.content, position: s.position, completed: false })) },
+      },
+      include: taskInclude,
+    }));
+    await prisma.taskEvent.create({ data: { taskId: copy.id, toColumnId: copy.columnId, actorId: req.user.id } });
+    await activity(copy.id, req.user.id, 'duplicate', { fromTitle: src.title });
+    realtime.boardChanged(src.column.boardId, 'task', req);
+    return reply.code(201).send({ task: copy });
+  });
+
+  // --- Transfert vers un autre tableau du même espace ---
+  // Les étiquettes sont reprises par nom (créées si besoin sur le tableau cible), les assignés et liens wiki sont conservés.
+  app.post('/tasks/:id/transfer', {
+    ...auth,
+    schema: { params: idParam, body: { type: 'object', required: ['boardId'], additionalProperties: false, properties: { boardId: uuid, columnId: uuid } } },
+  }, async (req) => {
+    const { workspaceId } = await authz.check(req.user, 'task', req.params.id, 'EDITOR');
+    const target = await authz.check(req.user, 'board', req.body.boardId, 'EDITOR');
+    if (target.workspaceId !== workspaceId) throw badRequest('Le tableau cible doit appartenir au même espace');
+    const task = await prisma.task.findUnique({ where: { id: req.params.id }, include: { column: { select: { title: true, boardId: true, board: { select: { title: true } } } }, labels: { include: { label: true } } } });
+    if (task.column.boardId === req.body.boardId) throw badRequest('La carte est déjà sur ce tableau');
+    const column = req.body.columnId
+      ? await prisma.column.findFirst({ where: { id: req.body.columnId, boardId: req.body.boardId } })
+      : await prisma.column.findFirst({ where: { boardId: req.body.boardId }, orderBy: { position: 'asc' } });
+    if (!column) throw badRequest('Colonne cible invalide');
+    const targetBoard = await prisma.board.findUnique({ where: { id: req.body.boardId }, select: { title: true, labels: true } });
+
+    const labelIds = [];
+    let pos = (targetBoard.labels.reduce((m, l) => Math.max(m, l.position), 0)) + 1000;
+    for (const { label } of task.labels) {
+      const same = targetBoard.labels.find((l) => l.name.toLowerCase() === label.name.toLowerCase());
+      if (same) labelIds.push(same.id);
+      else {
+        const created = await prisma.label.create({ data: { boardId: req.body.boardId, name: label.name, color: label.color, position: pos } });
+        pos += 1000;
+        labelIds.push(created.id);
+      }
+    }
+    const last = await prisma.task.findFirst({ where: { columnId: column.id }, orderBy: { position: 'desc' } });
+    await prisma.task.update({
+      where: { id: task.id },
+      data: { columnId: column.id, position: (last?.position ?? 0) + 1000, labels: { deleteMany: {}, create: labelIds.map((labelId) => ({ labelId })) } },
+    });
+    await prisma.taskEvent.create({ data: { taskId: task.id, fromColumnId: task.columnId, toColumnId: column.id, actorId: req.user.id } });
+    await activity(task.id, req.user.id, 'transfer', { fromBoard: task.column.board.title, toBoard: targetBoard.title, to: column.title });
+    realtime.boardChanged(task.column.boardId, 'task', req);
+    realtime.boardChanged(req.body.boardId, 'task', req);
+    return { task: { id: task.id, boardId: req.body.boardId, columnId: column.id } };
   });
 
   app.delete('/tasks/:id', { ...auth, schema: { params: idParam } }, async (req) => {
@@ -151,6 +322,16 @@ export default async function taskRoutes(app) {
     await app.removeStoredFiles(attachments.map((a) => a.storageName));
     realtime.boardChanged(boardId, 'task', req);
     return { ok: true };
+  });
+
+  // --- Journal d'activité ---
+  app.get('/tasks/:id/activity', { ...auth, schema: { params: idParam } }, async (req) => {
+    await authz.check(req.user, 'task', req.params.id, 'VIEWER');
+    const activities = await prisma.taskActivity.findMany({
+      where: { taskId: req.params.id }, orderBy: { createdAt: 'desc' }, take: 200,
+      select: { id: true, type: true, data: true, createdAt: true, actor: { select: { id: true, displayName: true } } },
+    });
+    return { activities };
   });
 
   // --- Sous-tâches ---
@@ -183,14 +364,23 @@ export default async function taskRoutes(app) {
   });
 
   // --- Commentaires ---
-  app.post('/tasks/:id/comments', {
-    ...auth,
-    schema: { params: idParam, body: { type: 'object', required: ['content'], additionalProperties: false, properties: { content: { type: 'string', minLength: 1, maxLength: 10000 } } } },
-  }, async (req, reply) => {
+  const commentBody = { type: 'object', required: ['content'], additionalProperties: false, properties: { content: { type: 'string', minLength: 1, maxLength: 10000 } } };
+  app.post('/tasks/:id/comments', { ...auth, schema: { params: idParam, body: commentBody } }, async (req, reply) => {
     await authz.check(req.user, 'task', req.params.id, 'EDITOR');
     const comment = await prisma.comment.create({ data: { content: req.body.content, taskId: req.params.id, authorId: req.user.id } });
+    await activity(req.params.id, req.user.id, 'comment');
     realtime.boardChanged(await boardOfTask(req.params.id), 'comment', req);
     return reply.code(201).send({ comment });
+  });
+
+  // Seul l'auteur modifie son commentaire (y compris un propriétaire d'espace : on ne fait pas dire à quelqu'un ce qu'il n'a pas écrit)
+  app.patch('/comments/:id', { ...auth, schema: { params: idParam, body: commentBody } }, async (req) => {
+    await authz.check(req.user, 'comment', req.params.id, 'EDITOR');
+    const current = await prisma.comment.findUnique({ where: { id: req.params.id } });
+    if (current.authorId !== req.user.id) throw forbidden('Seul l\'auteur peut modifier ce commentaire');
+    const comment = await prisma.comment.update({ where: { id: current.id }, data: { content: req.body.content, editedAt: new Date() } });
+    realtime.boardChanged(await boardOfTask(comment.taskId), 'comment', req);
+    return { comment };
   });
 
   app.delete('/comments/:id', { ...auth, schema: { params: idParam } }, async (req) => {

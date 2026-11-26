@@ -1,10 +1,17 @@
 import { Parser } from 'json2csv';
+import { badRequest } from '../lib/errors.js';
 
 const uuid = { type: 'string', format: 'uuid' };
 const idParam = { type: 'object', required: ['id'], properties: { id: uuid } };
 const userSel = { select: { id: true, username: true, displayName: true } };
 const assigneesSel = { orderBy: { assignedAt: 'asc' }, select: { user: userSel } };
-const flat = (t) => ({ ...t, assignees: t.assignees.map((a) => a.user) });
+const flat = (t) => {
+  const { labels, ...rest } = t;
+  return { ...rest, assignees: t.assignees.map((a) => a.user), ...(labels ? { labelIds: labels.map((l) => l.labelId) } : {}) };
+};
+/** Palette des étiquettes (classes définies côté client) */
+export const LABEL_COLORS = ['gray', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink'];
+const PRIORITY_LABEL = { NONE: '', LOW: 'Basse', MEDIUM: 'Normale', HIGH: 'Haute', CRITICAL: 'Critique' };
 
 export default async function boardRoutes(app) {
   const { prisma, authz, realtime } = app;
@@ -16,13 +23,16 @@ export default async function boardRoutes(app) {
       where: { id: req.params.id },
       include: {
         workspace: { select: { id: true, name: true } },
+        labels: { orderBy: { position: 'asc' } },
         columns: {
           orderBy: { position: 'asc' },
           include: {
             tasks: {
+              where: { archivedAt: null },
               orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
               include: {
                 assignees: assigneesSel,
+                labels: { select: { labelId: true } },
                 subtasks: { orderBy: { position: 'asc' } },
                 _count: { select: { comments: true, attachments: true } },
               },
@@ -32,7 +42,8 @@ export default async function boardRoutes(app) {
       },
     });
     const columns = board.columns.map((c) => ({ ...c, tasks: c.tasks.map(flat) }));
-    return { board: { ...board, columns, myRole: role } };
+    const archivedCount = await prisma.task.count({ where: { column: { boardId: board.id }, archivedAt: { not: null } } });
+    return { board: { ...board, columns, archivedCount, myRole: role } };
   });
 
   app.patch('/boards/:id', {
@@ -89,6 +100,37 @@ export default async function boardRoutes(app) {
     return { ok: true };
   });
 
+  // --- Étiquettes du tableau ---
+  const labelBody = { name: { type: 'string', minLength: 1, maxLength: 40 }, color: { enum: LABEL_COLORS }, position: { type: 'number' } };
+  app.post('/boards/:id/labels', {
+    ...auth,
+    schema: { params: idParam, body: { type: 'object', required: ['name', 'color'], additionalProperties: false, properties: labelBody } },
+  }, async (req, reply) => {
+    await authz.check(req.user, 'board', req.params.id, 'EDITOR');
+    if (await prisma.label.count({ where: { boardId: req.params.id } }) >= 50) throw badRequest('50 étiquettes au plus par tableau');
+    const last = await prisma.label.findFirst({ where: { boardId: req.params.id }, orderBy: { position: 'desc' } });
+    const label = await prisma.label.create({ data: { ...req.body, name: req.body.name.trim(), position: req.body.position ?? (last?.position ?? 0) + 1000, boardId: req.params.id } });
+    realtime.boardChanged(req.params.id, 'label', req);
+    return reply.code(201).send({ label });
+  });
+
+  app.patch('/labels/:id', {
+    ...auth,
+    schema: { params: idParam, body: { type: 'object', additionalProperties: false, minProperties: 1, properties: labelBody } },
+  }, async (req) => {
+    await authz.check(req.user, 'label', req.params.id, 'EDITOR');
+    const label = await prisma.label.update({ where: { id: req.params.id }, data: { ...req.body, ...(req.body.name ? { name: req.body.name.trim() } : {}) } });
+    realtime.boardChanged(label.boardId, 'label', req);
+    return { label };
+  });
+
+  app.delete('/labels/:id', { ...auth, schema: { params: idParam } }, async (req) => {
+    await authz.check(req.user, 'label', req.params.id, 'EDITOR');
+    const label = await prisma.label.delete({ where: { id: req.params.id } });
+    realtime.boardChanged(label.boardId, 'label', req);
+    return { ok: true };
+  });
+
   // --- Statistiques ---
   app.get('/boards/:id/stats', {
     ...auth,
@@ -98,11 +140,11 @@ export default async function boardRoutes(app) {
     const since = new Date(Date.now() - req.query.days * 86400_000);
     const columns = await prisma.column.findMany({
       where: { boardId: req.params.id }, orderBy: { position: 'asc' },
-      select: { id: true, title: true, _count: { select: { tasks: true } } },
+      select: { id: true, title: true, _count: { select: { tasks: { where: { archivedAt: null } } } } },
     });
     const ids = columns.map((c) => c.id);
     const events = await prisma.taskEvent.findMany({ where: { toColumnId: { in: ids }, timestamp: { gte: since } }, select: { toColumnId: true, timestamp: true } });
-    const overdue = await prisma.task.count({ where: { columnId: { in: ids.slice(0, -1) }, dueDate: { lt: new Date() } } });
+    const overdue = await prisma.task.count({ where: { columnId: { in: ids.slice(0, -1) }, archivedAt: null, dueDate: { lt: new Date() } } });
     const perDay = {};
     const doneId = ids.at(-1);
     for (const e of events) if (e.toColumnId === doneId) {
@@ -120,17 +162,19 @@ export default async function boardRoutes(app) {
   app.get('/boards/:id/export.csv', { ...auth, schema: { params: idParam } }, async (req, reply) => {
     await authz.check(req.user, 'board', req.params.id, 'VIEWER');
     const tasks = await prisma.task.findMany({
-      where: { column: { boardId: req.params.id } },
-      include: { column: { select: { title: true } }, assignees: assigneesSel },
+      where: { column: { boardId: req.params.id }, archivedAt: null },
+      include: { column: { select: { title: true } }, assignees: assigneesSel, labels: { select: { label: { select: { name: true } } } } },
       orderBy: [{ column: { position: 'asc' } }, { position: 'asc' }],
     });
     // Neutralisation de l'injection de formules (=, +, -, @) à l'ouverture dans un tableur
     const safe = (v) => (typeof v === 'string' && /^[=+\-@\t\r]/.test(v) ? `'${v}` : v);
     const rows = tasks.map((t) => ({
       Colonne: safe(t.column.title), Titre: safe(t.title), Assignes: safe(t.assignees.map((a) => a.user.displayName).join(', ')),
+      Priorite: PRIORITY_LABEL[t.priority], Etiquettes: safe(t.labels.map((l) => l.label.name).join(', ')),
+      Debut: t.startDate?.toISOString().slice(0, 10) ?? '',
       Echeance: t.dueDate?.toISOString().slice(0, 10) ?? '', Creation: t.createdAt.toISOString(), MiseAJour: t.updatedAt.toISOString(),
     }));
-    const csv = new Parser({ fields: ['Colonne', 'Titre', 'Assignes', 'Echeance', 'Creation', 'MiseAJour'], delimiter: ';' }).parse(rows);
+    const csv = new Parser({ fields: ['Colonne', 'Titre', 'Assignes', 'Priorite', 'Etiquettes', 'Debut', 'Echeance', 'Creation', 'MiseAJour'], delimiter: ';' }).parse(rows);
     return reply.header('content-type', 'text/csv; charset=utf-8')
       .header('content-disposition', 'attachment; filename="kanzen-export.csv"')
       .send(`\uFEFF${csv}`);
@@ -145,6 +189,7 @@ export default async function boardRoutes(app) {
     const tasks = await prisma.task.findMany({
       where: {
         dueDate: { gte: new Date(req.query.from), lte: new Date(`${req.query.to}T23:59:59.999Z`) },
+        archivedAt: null,
         column: { board: { archived: false, ...wsFilter } },
         ...(req.query.mine ? { assignees: { some: { userId: req.user.id } } } : {}),
       },
