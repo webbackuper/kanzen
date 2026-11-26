@@ -62,6 +62,10 @@ npm prune --omit=dev --no-audit --no-fund
 ENGINE="$(ls node_modules/@prisma/engines/schema-engine-* | grep -v '\.gz$' | head -1)"
 mv "$ENGINE" node_modules/@prisma/engines/schema-engine
 rm -f node_modules/@prisma/engines/schema-engine-*
+# Bibliothèques du navigateur déjà intégrées à dist/ (et listées dans le SBOM, produit avant cet élagage) :
+# inutiles côté serveur, Mermaid pèse à lui seul ~140 Mo. Contrôle : le serveur se charge toujours.
+rm -rf node_modules/mermaid node_modules/@mermaid-js
+node --input-type=module -e "await import('./src/server/app.js')" || { echo "Le serveur ne se charge plus après élagage" >&2; exit 1; }
 # Binaires natifs inutiles en production (autres OS/architectures)
 find node_modules/argon2/prebuilds -mindepth 1 -maxdepth 1 ! -name linux-x64 -exec rm -rf {} +
 

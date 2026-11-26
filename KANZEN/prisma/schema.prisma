@@ -27,6 +27,24 @@ enum WorkspaceRole {
   VIEWER // lecture seule
 }
 
+/// Priorité d'une tâche (de « aucune » à « critique »)
+enum TaskPriority {
+  NONE
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+/// Type d'un champ personnalisé de tableau
+enum FieldType {
+  TEXT
+  NUMBER
+  DATE
+  SELECT
+  CHECKBOX
+}
+
 /// Origine du compte
 enum AuthSource {
   LOCAL
@@ -56,20 +74,26 @@ model User {
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
 
-  sessions      Session[]
-  memberships   WorkspaceMember[]
-  assignments   TaskAssignee[]
-  createdTasks  Task[]            @relation("CreatedBy")
-  comments      Comment[]
-  attachments   Attachment[]
-  wikiCreated   WikiPage[]        @relation("WikiCreatedBy")
-  wikiUpdated   WikiPage[]        @relation("WikiUpdatedBy")
-  wikiRevisions WikiRevision[]
-  wikiFiles     WikiFile[]
-  wikiAccess    WikiPageMember[]
-  wikiFavorites WikiFavorite[]
-  wikiViews     WikiView[]
-  wikiTaskLinks WikiTaskLink[]
+  sessions       Session[]
+  memberships    WorkspaceMember[]
+  assignments    TaskAssignee[]
+  createdTasks   Task[]            @relation("CreatedBy")
+  comments       Comment[]
+  attachments    Attachment[]
+  wikiCreated    WikiPage[]        @relation("WikiCreatedBy")
+  wikiUpdated    WikiPage[]        @relation("WikiUpdatedBy")
+  wikiRevisions  WikiRevision[]
+  wikiFiles      WikiFile[]
+  wikiAccess     WikiPageMember[]
+  wikiFavorites  WikiFavorite[]
+  wikiViews      WikiView[]
+  wikiTaskLinks  WikiTaskLink[]
+  taskActivities TaskActivity[]
+  wikiComments   WikiComment[]     @relation("WikiCommentAuthor")
+  wikiResolved   WikiComment[]     @relation("WikiCommentResolver")
+  wikiVerified   WikiPage[]        @relation("WikiVerifiedBy")
+  wikiOwned      WikiPage[]        @relation("WikiOwner")
+  wikiTemplates  WikiTemplate[]
 }
 
 /// Session côté serveur : le cookie porte un jeton opaque, seul son SHA-256 est stocké.
@@ -89,16 +113,17 @@ model Session {
 }
 
 model Workspace {
-  id        String            @id @default(uuid()) @db.Uuid
-  name      String
-  slug      String            @unique
-  createdAt DateTime          @default(now())
-  members   WorkspaceMember[]
-  boards    Board[]
-  wikiPages WikiPage[]
+  id             String            @id @default(uuid()) @db.Uuid
+  name           String
+  slug           String            @unique
+  createdAt      DateTime          @default(now())
+  members        WorkspaceMember[]
+  boards         Board[]
+  wikiPages      WikiPage[]
+  wikiTemplates  WikiTemplate[]
   /// Page affichée en tête de l'accueil du wiki (facultative)
-  wikiHomePageId String?   @unique @db.Uuid
-  wikiHomePage   WikiPage? @relation("WikiHome", fields: [wikiHomePageId], references: [id], onDelete: SetNull)
+  wikiHomePageId String?           @unique @db.Uuid
+  wikiHomePage   WikiPage?         @relation("WikiHome", fields: [wikiHomePageId], references: [id], onDelete: SetNull)
 }
 
 model WorkspaceMember {
@@ -113,15 +138,80 @@ model WorkspaceMember {
 }
 
 model Board {
-  id          String    @id @default(uuid()) @db.Uuid
+  id          String       @id @default(uuid()) @db.Uuid
   title       String
-  workspaceId String    @db.Uuid
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  archived    Boolean   @default(false)
-  createdAt   DateTime  @default(now())
+  workspaceId String       @db.Uuid
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  archived    Boolean      @default(false)
+  createdAt   DateTime     @default(now())
   columns     Column[]
+  labels      Label[]
+  fields      BoardField[]
 
   @@index([workspaceId])
+}
+
+/// Champ personnalisé d'un tableau (à la monday / ClickUp)
+model BoardField {
+  id       String           @id @default(uuid()) @db.Uuid
+  boardId  String           @db.Uuid
+  board    Board            @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  name     String
+  type     FieldType
+  /// Valeurs proposées (type SELECT)
+  options  String[]         @default([])
+  position Float
+  values   TaskFieldValue[]
+
+  @@index([boardId])
+}
+
+/// Valeur d'un champ personnalisé sur une carte (JSON typé selon le champ)
+model TaskFieldValue {
+  taskId  String     @db.Uuid
+  task    Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fieldId String     @db.Uuid
+  field   BoardField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  value   Json
+
+  @@id([taskId, fieldId])
+  @@index([fieldId])
+}
+
+/// Dépendance entre cartes : « blocker » bloque « blocked » (même espace)
+model TaskDependency {
+  blockerId   String   @db.Uuid
+  blocker     Task     @relation("Blocks", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedId   String   @db.Uuid
+  blocked     Task     @relation("BlockedBy", fields: [blockedId], references: [id], onDelete: Cascade)
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+/// Étiquette d'un tableau (nom + couleur), à la Trello
+model Label {
+  id       String      @id @default(uuid()) @db.Uuid
+  boardId  String      @db.Uuid
+  board    Board       @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  name     String
+  color    String
+  position Float
+  tasks    TaskLabel[]
+
+  @@index([boardId])
+}
+
+model TaskLabel {
+  taskId  String @db.Uuid
+  task    Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  labelId String @db.Uuid
+  label   Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, labelId])
+  @@index([labelId])
 }
 
 model Column {
@@ -138,20 +228,31 @@ model Column {
 }
 
 model Task {
-  id          String         @id @default(uuid()) @db.Uuid
+  id          String           @id @default(uuid()) @db.Uuid
   title       String
-  description String         @default("")
-  color       String         @default("white")
+  description String           @default("")
+  color       String           @default("white")
   /// Position fractionnaire dans la colonne (réordonnancement sans renuméroter)
   position    Float
-  columnId    String         @db.Uuid
-  column      Column         @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  columnId    String           @db.Uuid
+  column      Column           @relation(fields: [columnId], references: [id], onDelete: Cascade)
   dueDate     DateTime?
+  startDate   DateTime?
+  priority    TaskPriority     @default(NONE)
+  /// Estimation de la charge, en heures
+  estimate    Float?
+  /// Carte archivée : masquée du tableau, restaurable
+  archivedAt  DateTime?
   assignees   TaskAssignee[]
-  createdById String?        @db.Uuid
-  createdBy   User?          @relation("CreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  labels      TaskLabel[]
+  activities  TaskActivity[]
+  fieldValues TaskFieldValue[]
+  blocks      TaskDependency[] @relation("Blocks")
+  blockedBy   TaskDependency[] @relation("BlockedBy")
+  createdById String?          @db.Uuid
+  createdBy   User?            @relation("CreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 
   subtasks    SubTask[]
   comments    Comment[]
@@ -162,6 +263,22 @@ model Task {
   /// Chargement d'un tableau : cartes d'une colonne triées par position
   @@index([columnId, position])
   @@index([dueDate])
+  @@index([archivedAt])
+}
+
+/// Journal d'activité d'une carte (création, déplacement, modification, commentaire…)
+model TaskActivity {
+  id        String   @id @default(uuid()) @db.Uuid
+  taskId    String   @db.Uuid
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actorId   String?  @db.Uuid
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  /// create, update, move, archive, restore, comment, duplicate, transfer, attachment
+  type      String
+  data      Json?
+  createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
 }
 
 /// Affectation d'une tâche à un ou plusieurs utilisateurs
@@ -206,13 +323,15 @@ model Attachment {
 }
 
 model Comment {
-  id        String   @id @default(uuid()) @db.Uuid
+  id        String    @id @default(uuid()) @db.Uuid
   content   String
-  createdAt DateTime @default(now())
-  taskId    String   @db.Uuid
-  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  authorId  String?  @db.Uuid
-  author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt DateTime  @default(now())
+  /// Renseigné quand l'auteur a modifié son commentaire
+  editedAt  DateTime?
+  taskId    String    @db.Uuid
+  task      Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String?   @db.Uuid
+  author    User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
 
   @@index([taskId, createdAt])
 }
@@ -288,13 +407,22 @@ model WikiPage {
   /// (et des propriétaires de l'espace). Les restrictions des ancêtres se cumulent.
   restricted Boolean @default(false)
 
+  /// Page vérifiée (à la Confluence / Notion) : propriétaire, dernière vérification et périodicité de revue
+  ownerId         String?   @db.Uuid
+  owner           User?     @relation("WikiOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  verifiedAt      DateTime?
+  verifiedById    String?   @db.Uuid
+  verifiedBy      User?     @relation("WikiVerifiedBy", fields: [verifiedById], references: [id], onDelete: SetNull)
+  reviewEveryDays Int?
+
   revisions WikiRevision[]
   files     WikiFile[]
   access    WikiPageMember[]
   favorites WikiFavorite[]
   views     WikiView[]
   taskLinks WikiTaskLink[]
-  homeOf    Workspace?     @relation("WikiHome")
+  comments  WikiComment[]
+  homeOf    Workspace?       @relation("WikiHome")
 
   @@index([workspaceId, parentId])
   @@index([parentId])
@@ -383,4 +511,42 @@ model WikiTaskLink {
 
   @@id([pageId, taskId])
   @@index([taskId])
+}
+
+/// Commentaire sur une page du wiki (fil de discussion à un niveau, résolvable)
+model WikiComment {
+  id           String        @id @default(uuid()) @db.Uuid
+  pageId       String        @db.Uuid
+  page         WikiPage      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  parentId     String?       @db.Uuid
+  parent       WikiComment?  @relation("WikiCommentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies      WikiComment[] @relation("WikiCommentThread")
+  authorId     String?       @db.Uuid
+  author       User?         @relation("WikiCommentAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  content      String
+  createdAt    DateTime      @default(now())
+  editedAt     DateTime?
+  resolvedAt   DateTime?
+  resolvedById String?       @db.Uuid
+  resolvedBy   User?         @relation("WikiCommentResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([pageId, createdAt])
+  @@index([parentId])
+}
+
+/// Modèle de page créé par l'équipe (en plus des modèles fournis)
+model WikiTemplate {
+  id          String    @id @default(uuid()) @db.Uuid
+  workspaceId String    @db.Uuid
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  title       String
+  icon        String?
+  description String    @default("")
+  content     Json
+  createdById String?   @db.Uuid
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId])
 }

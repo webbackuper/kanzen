@@ -38,6 +38,7 @@ export default async function attachmentRoutes(app) {
       data: { filename, storageName, mimetype: file.mimetype, size, sha256: hash.digest('hex'), taskId: req.params.id, uploadedById: req.user.id },
       select: { id: true, filename: true, mimetype: true, size: true, uploadedAt: true, task: { select: { column: { select: { boardId: true } } } } },
     });
+    await prisma.taskActivity.create({ data: { taskId: req.params.id, actorId: req.user.id, type: 'attachment', data: { filename } } });
     realtime.boardChanged(attachment.task.column.boardId, 'attachment', req);
     const { task: _task, ...out } = attachment;
     return reply.code(201).send({ attachment: out });

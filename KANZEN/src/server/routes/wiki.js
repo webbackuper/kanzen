@@ -7,7 +7,7 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { zipSync } from 'fflate';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
-import { docFileIds, docText, docToMarkdown, emptyDoc, sanitizeDoc } from '../lib/wikidoc.js';
+import { docFileIds, docText, docToMarkdown, emptyDoc, remapFiles, sanitizeDoc } from '../lib/wikidoc.js';
 import { createWikiAccess } from '../lib/wikiAccess.js';
 import { attachWikiCollab } from '../wikiCollab.js';
 
@@ -205,6 +205,7 @@ export default async function wikiRoutes(app) {
         myRole: role,
         favorite: Boolean(favorite),
         restricted: page.restricted,
+        verification: await verificationOf(page),
         /** La page est soumise à une restriction (la sienne ou celle d'un ancêtre) */
         restrictedBy: [...breadcrumb.filter((b) => restrictedIds.has(b.id)), ...(page.restricted ? [{ id: page.id, title: page.title }] : [])].map((b) => ({ id: b.id, title: b.title })),
       }),
@@ -654,7 +655,7 @@ export default async function wikiRoutes(app) {
   }, async (req) => {
     await authz.require(req.user, req.params.id, 'VIEWER');
     const tasks = await prisma.task.findMany({
-      where: { column: { board: { workspaceId: req.params.id, archived: false } }, ...(req.query.q.trim() ? { title: { contains: req.query.q.trim(), mode: 'insensitive' } } : {}) },
+      where: { archivedAt: null, column: { board: { workspaceId: req.params.id, archived: false } }, ...(req.query.q.trim() ? { title: { contains: req.query.q.trim(), mode: 'insensitive' } } : {}) },
       orderBy: { updatedAt: 'desc' }, take: 20, select: taskSel,
     });
     return { tasks: tasks.map(publicTask) };
@@ -710,6 +711,282 @@ export default async function wikiRoutes(app) {
       .header('x-content-type-options', 'nosniff')
       .header('cache-control', 'private, no-store')
       .send(Buffer.from(zip));
+  });
+
+  // ---------------------------------------------------------------------------
+  // Page vérifiée (à la Confluence / Notion) : un propriétaire, une date de dernière vérification
+  // et une périodicité de revue. Une page dont la revue est dépassée est signalée « à revoir ».
+  // ---------------------------------------------------------------------------
+  const REVIEW_PERIODS = [30, 90, 180, 365];
+  function verificationStatus(p, now = Date.now()) {
+    if (!p.verifiedAt) return p.reviewEveryDays ? 'expired' : 'none';
+    if (!p.reviewEveryDays) return 'verified';
+    return p.verifiedAt.getTime() + p.reviewEveryDays * 86400_000 < now ? 'expired' : 'verified';
+  }
+  async function verificationOf(page) {
+    const [owner, verifiedBy] = await Promise.all([
+      page.ownerId ? prisma.user.findUnique({ where: { id: page.ownerId }, ...userRef }) : null,
+      page.verifiedById ? prisma.user.findUnique({ where: { id: page.verifiedById }, ...userRef }) : null,
+    ]);
+    const dueAt = page.verifiedAt && page.reviewEveryDays ? new Date(page.verifiedAt.getTime() + page.reviewEveryDays * 86400_000) : null;
+    return { status: verificationStatus(page), owner, verifiedAt: page.verifiedAt, verifiedBy, reviewEveryDays: page.reviewEveryDays, dueAt };
+  }
+
+  app.put('/wiki/pages/:id/verification', {
+    ...auth,
+    schema: {
+      params: idParam,
+      body: { type: 'object', additionalProperties: false, minProperties: 1, properties: { ownerId: nullableUuid, reviewEveryDays: { type: ['integer', 'null'], enum: [...REVIEW_PERIODS, null] } } },
+    },
+  }, async (req) => {
+    const { workspaceId } = await checkPage(req.user, req.params.id, 'EDITOR');
+    const data = {};
+    if (req.body.ownerId !== undefined) {
+      if (req.body.ownerId) {
+        const owner = await prisma.user.findUnique({ where: { id: req.body.ownerId } });
+        if (!owner || owner.disabled || !(await authz.workspaceRole(owner, workspaceId))) throw badRequest('Le propriétaire doit être membre de l\'espace');
+      }
+      data.ownerId = req.body.ownerId;
+    }
+    if (req.body.reviewEveryDays !== undefined) data.reviewEveryDays = req.body.reviewEveryDays;
+    const page = await prisma.wikiPage.update({ where: { id: req.params.id }, data });
+    realtime.wikiChanged(workspaceId, { pageId: page.id, reason: 'verification', by: req.user.displayName });
+    return { verification: await verificationOf(page) };
+  });
+
+  app.post('/wiki/pages/:id/verify', { ...auth, schema: { params: idParam } }, async (req) => {
+    const { workspaceId } = await checkPage(req.user, req.params.id, 'EDITOR');
+    const current = await prisma.wikiPage.findUnique({ where: { id: req.params.id }, select: { deletedAt: true, ownerId: true } });
+    if (current.deletedAt) throw conflict('Cette page est dans la corbeille');
+    const page = await prisma.wikiPage.update({
+      where: { id: req.params.id },
+      // Sans propriétaire désigné, celui qui vérifie le devient
+      data: { verifiedAt: new Date(), verifiedById: req.user.id, ...(current.ownerId ? {} : { ownerId: req.user.id }) },
+    });
+    await audit(req, 'wiki.verify', { target: page.id });
+    realtime.wikiChanged(workspaceId, { pageId: page.id, reason: 'verification', by: req.user.displayName });
+    return { verification: await verificationOf(page) };
+  });
+
+  app.delete('/wiki/pages/:id/verify', { ...auth, schema: { params: idParam } }, async (req) => {
+    const { workspaceId } = await checkPage(req.user, req.params.id, 'EDITOR');
+    const page = await prisma.wikiPage.update({ where: { id: req.params.id }, data: { verifiedAt: null, verifiedById: null } });
+    realtime.wikiChanged(workspaceId, { pageId: page.id, reason: 'verification', by: req.user.displayName });
+    return { verification: await verificationOf(page) };
+  });
+
+  // Pages à revoir (revue dépassée) et pages dont je suis propriétaire
+  app.get('/workspaces/:id/wiki/review', { ...auth, schema: { params: idParam } }, async (req) => {
+    await authz.require(req.user, req.params.id, 'VIEWER');
+    const { canSee } = await access.forWorkspace(req.user, req.params.id);
+    const rows = await prisma.wikiPage.findMany({
+      where: { workspaceId: req.params.id, deletedAt: null, OR: [{ reviewEveryDays: { not: null } }, { ownerId: req.user.id }] },
+      select: { id: true, title: true, icon: true, ownerId: true, verifiedAt: true, reviewEveryDays: true, owner: userRef },
+      take: 2000,
+    });
+    const now = Date.now();
+    const pages = rows.filter((p) => canSee(p.id)).map((p) => ({ ...p, status: verificationStatus(p, now) }));
+    return {
+      expired: pages.filter((p) => p.status === 'expired').sort((a, b) => (a.verifiedAt?.getTime() ?? 0) - (b.verifiedAt?.getTime() ?? 0)),
+      mine: pages.filter((p) => p.ownerId === req.user.id),
+    };
+  });
+
+  // ---------------------------------------------------------------------------
+  // Commentaires de page : fils à un niveau (commentaire + réponses), résolvables
+  // ---------------------------------------------------------------------------
+  const commentSel = {
+    id: true, pageId: true, parentId: true, content: true, createdAt: true, editedAt: true, resolvedAt: true,
+    author: { select: { id: true, displayName: true } }, resolvedBy: { select: { id: true, displayName: true } },
+  };
+  /** Commentaire et contrôle d'accès à sa page (pages restreintes comprises). */
+  async function checkComment(user, id, minRole) {
+    await authz.check(user, 'wikiComment', id, minRole);
+    const comment = await prisma.wikiComment.findUnique({ where: { id } });
+    const { role, workspaceId } = await checkPage(user, comment.pageId, minRole);
+    return { comment, role, workspaceId };
+  }
+
+  app.get('/wiki/pages/:id/comments', { ...auth, schema: { params: idParam } }, async (req) => {
+    await checkPage(req.user, req.params.id, 'VIEWER');
+    const all = await prisma.wikiComment.findMany({ where: { pageId: req.params.id }, orderBy: { createdAt: 'asc' }, select: commentSel, take: 2000 });
+    const threads = all.filter((c) => !c.parentId).map((c) => ({ ...c, replies: all.filter((r) => r.parentId === c.id) }));
+    return { threads };
+  });
+
+  const commentText = { type: 'string', minLength: 1, maxLength: 5000 };
+  app.post('/wiki/pages/:id/comments', {
+    ...auth,
+    schema: { params: idParam, body: { type: 'object', required: ['content'], additionalProperties: false, properties: { content: commentText, parentId: nullableUuid } } },
+  }, async (req, reply) => {
+    const { workspaceId } = await checkPage(req.user, req.params.id, 'EDITOR');
+    const page = await prisma.wikiPage.findUnique({ where: { id: req.params.id }, select: { deletedAt: true } });
+    if (page.deletedAt) throw conflict('Cette page est dans la corbeille');
+    if (req.body.parentId) {
+      const parent = await prisma.wikiComment.findUnique({ where: { id: req.body.parentId }, select: { pageId: true, parentId: true } });
+      if (!parent || parent.pageId !== req.params.id || parent.parentId) throw badRequest('Commentaire parent invalide');
+    }
+    const comment = await prisma.wikiComment.create({
+      data: { pageId: req.params.id, parentId: req.body.parentId ?? null, content: req.body.content.trim() || req.body.content, authorId: req.user.id },
+      select: commentSel,
+    });
+    // Une réponse rouvre un fil résolu
+    if (req.body.parentId) await prisma.wikiComment.updateMany({ where: { id: req.body.parentId, resolvedAt: { not: null } }, data: { resolvedAt: null, resolvedById: null } });
+    realtime.wikiChanged(workspaceId, { pageId: req.params.id, reason: 'comments', by: req.user.displayName });
+    return reply.code(201).send({ comment });
+  });
+
+  app.patch('/wiki/comments/:id', {
+    ...auth,
+    schema: { params: idParam, body: { type: 'object', required: ['content'], additionalProperties: false, properties: { content: commentText } } },
+  }, async (req) => {
+    const { comment: current, workspaceId } = await checkComment(req.user, req.params.id, 'EDITOR');
+    if (current.authorId !== req.user.id) throw forbidden('Seul l\'auteur peut modifier ce commentaire');
+    const comment = await prisma.wikiComment.update({ where: { id: current.id }, data: { content: req.body.content, editedAt: new Date() }, select: commentSel });
+    realtime.wikiChanged(workspaceId, { pageId: current.pageId, reason: 'comments', by: req.user.displayName });
+    return { comment };
+  });
+
+  app.post('/wiki/comments/:id/resolve', {
+    ...auth,
+    schema: { params: idParam, body: { type: 'object', required: ['resolved'], additionalProperties: false, properties: { resolved: { type: 'boolean' } } } },
+  }, async (req) => {
+    const { comment: current, workspaceId } = await checkComment(req.user, req.params.id, 'EDITOR');
+    if (current.parentId) throw badRequest('Seul le premier commentaire d\'un fil se résout');
+    const comment = await prisma.wikiComment.update({
+      where: { id: current.id },
+      data: req.body.resolved ? { resolvedAt: new Date(), resolvedById: req.user.id } : { resolvedAt: null, resolvedById: null },
+      select: commentSel,
+    });
+    realtime.wikiChanged(workspaceId, { pageId: current.pageId, reason: 'comments', by: req.user.displayName });
+    return { comment };
+  });
+
+  app.delete('/wiki/comments/:id', { ...auth, schema: { params: idParam } }, async (req) => {
+    const { comment, role, workspaceId } = await checkComment(req.user, req.params.id, 'VIEWER');
+    if (comment.authorId !== req.user.id && role !== 'OWNER') throw forbidden();
+    await prisma.wikiComment.delete({ where: { id: comment.id } }); // les réponses suivent (cascade)
+    realtime.wikiChanged(workspaceId, { pageId: comment.pageId, reason: 'comments', by: req.user.displayName });
+    return { ok: true };
+  });
+
+  // ---------------------------------------------------------------------------
+  // Modèles de page de l'équipe. Les images et fichiers ne sont pas repris : ils appartiennent
+  // à la page d'origine (droits, cycle de vie) et un modèle ne doit pas en dépendre.
+  // ---------------------------------------------------------------------------
+  const tplProps = { title, icon, description: { type: 'string', maxLength: 300 } };
+  const publicTemplate = (t) => ({ id: t.id, title: t.title, icon: t.icon, description: t.description, content: t.content, createdBy: t.createdBy ?? null, createdAt: t.createdAt, updatedAt: t.updatedAt });
+
+  app.get('/workspaces/:id/wiki/templates', { ...auth, schema: { params: idParam } }, async (req) => {
+    await authz.require(req.user, req.params.id, 'VIEWER');
+    const templates = await prisma.wikiTemplate.findMany({ where: { workspaceId: req.params.id }, orderBy: { title: 'asc' }, include: { createdBy: { select: { id: true, displayName: true } } } });
+    return { templates: templates.map(publicTemplate) };
+  });
+
+  app.post('/workspaces/:id/wiki/templates', {
+    ...auth,
+    bodyLimit: 2 * 1024 * 1024,
+    schema: { params: idParam, body: { type: 'object', required: ['title'], additionalProperties: false, properties: { ...tplProps, content, pageId: uuid } } },
+  }, async (req, reply) => {
+    await authz.require(req.user, req.params.id, 'EDITOR');
+    if (await prisma.wikiTemplate.count({ where: { workspaceId: req.params.id } }) >= 100) throw badRequest('100 modèles au plus par espace');
+    let doc = req.body.content;
+    if (req.body.pageId) {
+      const { workspaceId } = await checkPage(req.user, req.body.pageId, 'VIEWER');
+      if (workspaceId !== req.params.id) throw badRequest('La page doit appartenir à cet espace');
+      doc = (await prisma.wikiPage.findUnique({ where: { id: req.body.pageId }, select: { content: true } })).content;
+    }
+    doc = remapFiles(sanitizeDoc(doc ?? emptyDoc()), new Map());
+    const tpl = await prisma.wikiTemplate.create({
+      data: { workspaceId: req.params.id, title: req.body.title, icon: req.body.icon ?? null, description: req.body.description ?? '', content: doc, createdById: req.user.id },
+      include: { createdBy: { select: { id: true, displayName: true } } },
+    });
+    await audit(req, 'wiki.template.create', { target: tpl.id, details: { title: tpl.title } });
+    return reply.code(201).send({ template: publicTemplate(tpl) });
+  });
+
+  app.patch('/wiki/templates/:id', {
+    ...auth,
+    schema: { params: idParam, body: { type: 'object', additionalProperties: false, minProperties: 1, properties: tplProps } },
+  }, async (req) => {
+    await authz.check(req.user, 'wikiTemplate', req.params.id, 'EDITOR');
+    const tpl = await prisma.wikiTemplate.update({ where: { id: req.params.id }, data: req.body, include: { createdBy: { select: { id: true, displayName: true } } } });
+    return { template: publicTemplate(tpl) };
+  });
+
+  app.delete('/wiki/templates/:id', { ...auth, schema: { params: idParam } }, async (req) => {
+    const { role } = await authz.check(req.user, 'wikiTemplate', req.params.id, 'EDITOR');
+    const tpl = await prisma.wikiTemplate.findUnique({ where: { id: req.params.id } });
+    if (tpl.createdById !== req.user.id && role !== 'OWNER') throw forbidden('Seuls l\'auteur du modèle et les propriétaires de l\'espace peuvent le supprimer');
+    await prisma.wikiTemplate.delete({ where: { id: tpl.id } });
+    await audit(req, 'wiki.template.delete', { target: tpl.id, details: { title: tpl.title } });
+    return { ok: true };
+  });
+
+  // ---------------------------------------------------------------------------
+  // Duplication d'une page (et, sur demande, de ses sous-pages visibles). Les fichiers sont copiés :
+  // la copie est indépendante de l'original. La restriction d'accès est reprise à l'identique.
+  // ---------------------------------------------------------------------------
+  async function copyFiles(srcPageId, dstPageId, doc, userId) {
+    const ids = [...docFileIds(doc)];
+    const files = ids.length ? await prisma.wikiFile.findMany({ where: { id: { in: ids } } }) : [];
+    const map = new Map();
+    for (const f of files) {
+      const from = path.join(uploadDir, f.storageName);
+      if (!fs.existsSync(from)) continue;
+      const storageName = crypto.randomUUID();
+      fs.copyFileSync(from, path.join(uploadDir, storageName));
+      const nf = await prisma.wikiFile.create({ data: { pageId: dstPageId, filename: f.filename, storageName, mimetype: f.mimetype, size: f.size, sha256: f.sha256, uploadedById: userId } });
+      map.set(f.id, nf.id);
+    }
+    return remapFiles(doc, map);
+  }
+
+  app.post('/wiki/pages/:id/duplicate', {
+    ...auth,
+    schema: { params: idParam, body: { type: 'object', additionalProperties: false, properties: { withChildren: { type: 'boolean' } } } },
+  }, async (req, reply) => {
+    const { workspaceId } = await checkPage(req.user, req.params.id, 'VIEWER');
+    await authz.require(req.user, workspaceId, 'EDITOR');
+    const root = await prisma.wikiPage.findUnique({ where: { id: req.params.id } });
+    if (root.deletedAt) throw conflict('Cette page est dans la corbeille');
+    if (root.parentId) await checkPage(req.user, root.parentId, 'EDITOR');
+    const { canSee } = await access.forWorkspace(req.user, workspaceId);
+    const ids = req.body?.withChildren ? (await subtreeIds(root.id)).filter((id) => canSee(id)) : [root.id];
+    if (ids.length > 500) throw badRequest('Section trop volumineuse pour être dupliquée (500 pages au plus)');
+    const pages = await prisma.wikiPage.findMany({ where: { id: { in: ids }, deletedAt: null }, orderBy: [{ position: 'asc' }, { createdAt: 'asc' }] });
+    const members = await prisma.wikiPageMember.findMany({ where: { pageId: { in: pages.filter((p) => p.restricted).map((p) => p.id) } } });
+
+    // Position : juste après l'original parmi ses sœurs
+    const next = await prisma.wikiPage.findFirst({ where: { workspaceId, parentId: root.parentId, deletedAt: null, position: { gt: root.position } }, orderBy: { position: 'asc' }, select: { position: true } });
+    const idMap = new Map();
+    const queue = [root];
+    let copyRoot = null;
+    while (queue.length) {
+      const src = queue.shift();
+      const isRoot = src.id === root.id;
+      const created = await prisma.wikiPage.create({
+        data: {
+          workspaceId, parentId: isRoot ? root.parentId : idMap.get(src.parentId),
+          title: isRoot ? `${src.title} (copie)`.slice(0, 200) : src.title, icon: src.icon,
+          content: emptyDoc(), text: '', restricted: src.restricted,
+          position: isRoot ? (next ? (root.position + next.position) / 2 : root.position + 1000) : src.position,
+          createdById: req.user.id, updatedById: req.user.id,
+        },
+      });
+      idMap.set(src.id, created.id);
+      const doc = await copyFiles(src.id, created.id, src.content, req.user.id);
+      const page = await prisma.wikiPage.update({ where: { id: created.id }, data: { content: doc, text: docText(doc) } });
+      if (src.restricted) {
+        await prisma.wikiPageMember.createMany({ data: members.filter((m) => m.pageId === src.id).map((m) => ({ pageId: created.id, userId: m.userId })) });
+      }
+      await saveRevision(page, req.user.id);
+      copyRoot ??= page;
+      queue.push(...pages.filter((p) => p.parentId === src.id));
+    }
+    await audit(req, 'wiki.duplicate', { target: root.id, details: { copy: copyRoot.id, pages: idMap.size } });
+    realtime.wikiChanged(workspaceId, { pageId: copyRoot.id, version: copyRoot.version, reason: 'create', by: req.user.displayName });
+    return reply.code(201).send({ page: publicPage(copyRoot), count: idMap.size });
   });
 
   // --- Co-édition en temps réel (Yjs sur Socket.io) ---

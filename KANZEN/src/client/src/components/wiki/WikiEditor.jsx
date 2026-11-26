@@ -12,9 +12,9 @@ import { Placeholder } from '@tiptap/extensions';
 import {
   Bold, Italic, Strikethrough, Underline, Code, Highlighter, Heading1, Heading2, Heading3, List, ListOrdered, ListChecks,
   Quote, SquareCode, Minus, Link2, ImagePlus, Table as TableIcon, Undo2, Redo2, Columns3, Rows3, Trash2, Paperclip,
-  MessageSquareWarning, ChevronsDownUp, Pilcrow, FileText,
+  MessageSquareWarning, ChevronsDownUp, Pilcrow, FileText, ListTree, Network, TableOfContents as TocIcon,
 } from 'lucide-react';
-import { CALLOUTS, Callout, CodeBlock, FileAttachment, SlashCommands, WikiLinks } from './extensions';
+import { CALLOUTS, Callout, CodeBlock, FileAttachment, SlashCommands, Subpages, TableOfContents, WikiLinks } from './extensions';
 
 /** Même règle que le serveur : http(s), mailto, chemin interne ou ancre. */
 export const isSafeHref = (h) => typeof h === 'string' && (/^(https?:\/\/|mailto:)/i.test(h.trim()) || /^\/(?!\/)/.test(h) || /^#[\w-]*$/.test(h));
@@ -40,11 +40,16 @@ function slashItems(pick) {
     ...CALLOUTS.map(([v, label, emoji]) => [`Encadré ${label.toLowerCase()}`, `encadre callout ${label} ${v}`, emoji, (e) => e.chain().focus().setCallout(v).run()]),
     ['Bloc dépliable', 'depliable details toggle accordeon', ChevronsDownUp, (e) => e.chain().focus().setDetails().run()],
     ['Lien vers une page', 'lien page wiki [[', FileText, (e) => e.chain().focus().insertContent('[[').run()],
+    ['Sous-pages', 'sous-pages enfants arborescence liste pages children', ListTree, (e) => e.chain().focus().insertSubpages().run()],
+    ['Sommaire', 'sommaire table des matieres toc', TocIcon, (e) => e.chain().focus().insertToc().run()],
+    ['Diagramme', 'diagramme mermaid schema flux sequence gantt graphe', Network, (e) => e.chain().focus().insertContent({
+      type: 'codeBlock', attrs: { language: 'mermaid' }, content: [{ type: 'text', text: 'flowchart LR\n  A[Demande] --> B{Validée ?}\n  B -- oui --> C[Mise en production]\n  B -- non --> D[Retour au demandeur]' }],
+    }).run()],
   ];
   return items.map(([title, keys, Icon, run]) => ({ title, icon: typeof Icon === 'string' ? Icon : <Icon size={14} />, run, search: norm(`${title} ${keys}`) }));
 }
 
-function buildExtensions({ placeholder, collab, pickRef, pagesRef }) {
+function buildExtensions({ placeholder, collab, pickRef, pagesRef, pageIdRef }) {
   return [
     StarterKit.configure({
       heading: { levels: [1, 2, 3, 4] },
@@ -73,6 +78,8 @@ function buildExtensions({ placeholder, collab, pickRef, pagesRef }) {
     Placeholder.configure({ placeholder, includeChildren: false }),
     SlashCommands.configure({ items: () => slashItems((kind) => pickRef.current?.(kind)) }),
     WikiLinks.configure({ pages: () => pagesRef.current ?? [] }),
+    Subpages.configure({ pages: () => pagesRef.current ?? [], pageId: () => pageIdRef.current ?? null }),
+    TableOfContents,
     ...(collab ? [
       collab.extensions.Collaboration.configure({ document: collab.ydoc }),
       collab.extensions.CollaborationCaret.configure({ provider: collab.provider, user: collab.user }),
@@ -174,15 +181,18 @@ const IMAGE_TYPES = 'image/png,image/jpeg,image/gif,image/webp';
  * editable=false : rendu en lecture (mêmes règles d'affichage que l'édition).
  * onUploadFile(file) -> { url, inline, filename, size, mimetype } | null : envoi d'un fichier (image affichée ou fichier joint).
  * onNavigate : liens internes (/…) suivis dans l'application, sans recharger la page.
- * pages : pages du wiki proposées par « [[ ».
+ * pages : pages du wiki proposées par « [[ » (et arborescence du bloc « Sous-pages »).
+ * pageId : page affichée (bloc « Sous-pages »).
  * collab : { ydoc, provider, user, seed } pour la co-édition ; le contenu vient alors du document partagé.
  */
-export function WikiEditor({ content, editable = false, onChange, onUploadFile, onNavigate, onReady, pages, collab, placeholder = 'Commencez à écrire, ou tapez « / » pour insérer un bloc…' }) {
+export function WikiEditor({ content, editable = false, onChange, onUploadFile, onNavigate, onReady, pages, pageId, collab, placeholder = 'Commencez à écrire, ou tapez « / » pour insérer un bloc…' }) {
   const fileRef = useRef(null);
   const kindRef = useRef('file');
   const pickRef = useRef(null);
   const pagesRef = useRef(pages);
   pagesRef.current = pages;
+  const pageIdRef = useRef(pageId);
+  pageIdRef.current = pageId;
   const uploadRef = useRef(onUploadFile);
   uploadRef.current = onUploadFile;
   const editorRef = useRef(null);
@@ -204,7 +214,7 @@ export function WikiEditor({ content, editable = false, onChange, onUploadFile, 
   };
 
   const editor = useEditor({
-    extensions: buildExtensions({ placeholder, collab, pickRef, pagesRef }),
+    extensions: buildExtensions({ placeholder, collab, pickRef, pagesRef, pageIdRef }),
     ...(collab ? {} : { content }),
     editable,
     immediatelyRender: true,
@@ -255,6 +265,10 @@ export function WikiEditor({ content, editable = false, onChange, onUploadFile, 
     if (editor && !editable && !collab && content) editor.commands.setContent(content, { emitUpdate: false });
   }, [editor, content, editable, collab]);
   useEffect(() => { editor?.setEditable(editable); }, [editor, editable]);
+  // Liste des pages chargée ou modifiée : transaction vide pour rafraîchir le bloc « Sous-pages »
+  useEffect(() => {
+    if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta('kzPages', true).setMeta('addToHistory', false));
+  }, [editor, pages, pageId]);
 
   const onClick = (e) => {
     const a = e.target.closest?.('a[href]');

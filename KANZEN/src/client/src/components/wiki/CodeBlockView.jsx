@@ -1,8 +1,9 @@
 // Bloc de code : choix du langage (édition), étiquette et bouton « Copier » (lecture et édition).
 import { useState } from 'react';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
-import { Check, Copy } from 'lucide-react';
+import { Check, Code2, Copy, Network } from 'lucide-react';
 import { LANGUAGES } from './extensions';
+import { MermaidDiagram } from './BlockViews';
 
 /** Copie dans le presse-papiers, y compris hors contexte sécurisé (HTTP sur l'intranet). */
 export async function copyText(text) {
@@ -24,6 +25,7 @@ export async function copyText(text) {
 
 export function CodeBlockView({ node, updateAttributes, editor }) {
   const [copied, setCopied] = useState(false);
+  const [showCode, setShowCode] = useState(false);
   const language = node.attrs.language ?? '';
   const label = LANGUAGES.find(([k]) => k === language)?.[1] ?? (language || 'Texte brut');
   const copy = async () => {
@@ -46,7 +48,18 @@ export function CodeBlockView({ node, updateAttributes, editor }) {
           {copied ? <Check size={14} /> : <Copy size={14} />}
         </button>
       </div>
-      <pre className="hljs"><NodeViewContent as="code" className={language ? `language-${language}` : undefined} /></pre>
+      {/* Diagramme : le code reste dans le document (masqué en lecture, éditable en édition) */}
+      <pre className={`hljs ${language === 'mermaid' && !editor.isEditable && !showCode ? 'kz-hidden' : ''}`}><NodeViewContent as="code" className={language ? `language-${language}` : undefined} /></pre>
+      {language === 'mermaid' && (
+        <div contentEditable={false} className="kz-mermaid-box">
+          {!editor.isEditable && (
+            <button type="button" className="kz-mermaid-toggle kz-noprint" onClick={() => setShowCode(!showCode)} aria-pressed={showCode}>
+              {showCode ? <Network size={12} /> : <Code2 size={12} />} {showCode ? 'Masquer le code' : 'Voir le code'}
+            </button>
+          )}
+          <MermaidDiagram code={node.textContent} />
+        </div>
+      )}
     </NodeViewWrapper>
   );
 }

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import {
-  BookOpen, ChevronDown, ChevronRight, Clock, Download, Ellipsis, FileArchive, FileText, FileUp, FolderInput, History, House,
+  BadgeCheck, BookmarkPlus, BookOpen, ChevronDown, Copy, CopyPlus, ChevronRight, Clock, Download, Ellipsis, FileArchive, FileText, FileUp, FolderInput, History, House,
   Lock, Pencil, Plus, Printer, RotateCcw, Save, Search, Star, Trash2, X,
 } from 'lucide-react';
 import { api } from '../../api';
@@ -12,6 +12,7 @@ import { WikiEditor } from './WikiEditor';
 import { colorOf } from './colors';
 // Co-édition (Yjs) chargée à la demande, au passage en édition
 const loadCollab = () => import('./collab');
+import { PageComments, ReviewLists, SaveTemplateModal, VerificationBadge, VerificationModal } from './WikiExtras';
 import {
   AccessModal, Backlinks, HistoryModal, IconPicker, NewPageModal, Peers, TaskLinks, Toc, docHeadings, fmt,
 } from './WikiPanels';
@@ -70,7 +71,8 @@ function useWikiTree(workspaceId, onEvent) {
       if (connectedOnce) { reloadSoon(); eventRef.current?.({ workspaceId, reason: 'resync' }); }
       connectedOnce = true;
     });
-    socket.on('wiki:changed', (e) => { if (e.workspaceId === workspaceId) { reloadSoon(); eventRef.current?.(e); } });
+    // Un commentaire ne change pas l'arborescence : pas de rechargement de l'arbre
+    socket.on('wiki:changed', (e) => { if (e.workspaceId === workspaceId) { if (e.reason !== 'comments') reloadSoon(); eventRef.current?.(e); } });
     return () => { clearTimeout(timer); socket.disconnect(); };
   }, [workspaceId, load]);
   return { tree, error, reload: load };
@@ -315,6 +317,7 @@ export function WikiHome() {
               {tree.myRole !== 'VIEWER' && <button type="button" className={btnPrimary} onClick={() => add(null)}><Plus size={16} /> Nouvelle page</button>}
             </div>
             {tree.homePageId && <HomePageBlock pageId={tree.homePageId} />}
+            <ReviewLists workspaceId={id} refreshKey={tree} />
             {favorites.length > 0 && <PageList title="Mes favoris" icon={<Star size={14} />} pages={favorites} empty="" meta={(p) => fmt(p.updatedAt)} />}
             <PageList title="Consultées récemment" icon={<Clock size={14} />} pages={viewed} empty="Les pages que vous ouvrez apparaîtront ici." meta={(p) => `vue le ${fmt(p.viewedAt)}`} />
             <PageList title="Modifiées récemment" icon={<Pencil size={14} />} pages={recentlyChanged} empty="Aucune page pour l'instant." meta={(p) => fmt(p.updatedAt)} />
@@ -426,6 +429,7 @@ export function WikiPage({ user }) {
   const [session, setSession] = useState(null); // co-édition : objet de session, false = indisponible (édition seule)
   const [peers, setPeers] = useState([]);
   const [linksKey, setLinksKey] = useState(0);
+  const [commentsKey, setCommentsKey] = useState(0);
   const editingRef = useRef(false);
   editingRef.current = editing;
   const sessionRef = useRef(null);
@@ -450,6 +454,11 @@ export function WikiPage({ user }) {
   const onEvent = useCallback((e) => {
     if (e.reason === 'resync') { setLinksKey((k) => k + 1); if (!editingRef.current) load(); return; }
     if (e.reason === 'links') { setLinksKey((k) => k + 1); return; }
+    if (e.reason === 'comments') { if (e.pageId === id) setCommentsKey((k) => k + 1); return; }
+    if (e.reason === 'verification') {
+      if (e.pageId === id) api.get(`/wiki/pages/${id}`).then((r) => setPage((p) => ({ ...p, verification: r.page.verification })), () => {});
+      return;
+    }
     if (e.pageId !== id) { setLinksKey((k) => k + 1); return; }
     if (e.reason === 'purge') { navigate(-1); return; }
     if (editingRef.current) {
@@ -566,6 +575,12 @@ export function WikiPage({ user }) {
     try { await api.del(`/wiki/pages/${id}`); navigate(page.parentId ? `/wiki/${page.parentId}` : `/w/${page.workspaceId}/wiki`); } catch (x) { setError(x); }
   };
   const restore = async () => { try { await api.post(`/wiki/pages/${id}/restore`); load(); } catch (x) { setError(x); } };
+  const duplicate = (withChildren) => async () => {
+    try {
+      const r = await api.post(`/wiki/pages/${id}/duplicate`, { withChildren });
+      navigate(`/wiki/${r.page.id}`);
+    } catch (x) { setError(x); }
+  };
   const toggleFavorite = async () => {
     try {
       if (page.favorite) await api.del(`/wiki/pages/${id}/favorite`); else await api.put(`/wiki/pages/${id}/favorite`);
@@ -624,6 +639,18 @@ export function WikiPage({ user }) {
                 </div>
               )}
 
+              {/* En-tête d'impression : provenance, version et diffusion (masqué à l'écran) */}
+              <div className="kz-print-only text-[9pt] text-gray-700 border-b border-gray-400 pb-2 mb-4">
+                <div className="flex justify-between gap-4">
+                  <span>KanZen · Wiki{page.breadcrumb.length ? ` › ${page.breadcrumb.map((b) => b.title).join(' › ')}` : ''}</span>
+                  {(page.restricted || page.restrictedBy.length > 0) && <strong>DIFFUSION RESTREINTE</strong>}
+                </div>
+                <div>
+                  Version {page.version}, modifiée le {fmt(page.updatedAt)}{page.updatedBy ? ` par ${page.updatedBy.displayName}` : ''}
+                  {page.verification?.verifiedAt ? ` · vérifiée le ${fmt(page.verification.verifiedAt)}` : ''}
+                  {' '}· imprimée le {new Date().toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}{user ? ` par ${user.displayName}` : ''}
+                </div>
+              </div>
               <header className="flex flex-wrap items-start justify-between gap-3 mb-2">
                 {editing
                   ? <div className="flex-1 min-w-0 flex items-center gap-3">
@@ -650,6 +677,10 @@ export function WikiPage({ user }) {
                       canEdit && { label: 'Nouvelle sous-page', icon: <Plus size={14} />, run: () => add(page.id) },
                       canEdit && { label: 'Importer du Markdown ici', icon: <FileUp size={14} />, run: () => add(page.id) },
                       canEdit && { label: 'Déplacer…', icon: <FolderInput size={14} />, run: () => setModal('move') },
+                      canEdit && { label: 'Dupliquer', icon: <Copy size={14} />, run: duplicate(false) },
+                      canEdit && page.children.length > 0 && { label: 'Dupliquer avec les sous-pages', icon: <CopyPlus size={14} />, run: duplicate(true) },
+                      canEdit && { label: 'Enregistrer comme modèle…', icon: <BookmarkPlus size={14} />, run: () => setModal('template') },
+                      { label: 'Vérification…', icon: <BadgeCheck size={14} />, run: () => setModal('verify') },
                       { label: page.restricted || page.restrictedBy.length ? 'Accès restreint…' : 'Restreindre l\'accès…', icon: <Lock size={14} />, run: () => setModal('access') },
                       isOwner && !page.deletedAt && (isHome
                         ? { label: 'Ne plus afficher en accueil', icon: <House size={14} />, run: () => setHome(null) }
@@ -669,6 +700,7 @@ export function WikiPage({ user }) {
                     <Lock size={11} /> Accès restreint{page.restricted ? '' : ` (section « ${page.restrictedBy[0].title} »)`}
                   </button>
                 )}
+                <VerificationBadge verification={page.verification} onClick={() => setModal('verify')} />
                 {isHome && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-200"><House size={11} /> Accueil du wiki</span>}
                 {editing && session === false && <span className="text-amber-600">Co-édition indisponible : vous éditez seul.</span>}
               </p>
@@ -682,6 +714,7 @@ export function WikiPage({ user }) {
                   editable={editing}
                   collab={editing ? collab : undefined}
                   pages={linkPages}
+                  pageId={page.id}
                   onChange={(c) => { setDraft((d) => ({ ...d, content: c })); setDirty(true); }}
                   onUploadFile={uploadFile}
                   onNavigate={(href) => navigate(href)}
@@ -698,11 +731,16 @@ export function WikiPage({ user }) {
                   </ul>
                 </section>
               )}
-              {!editing && !page.deletedAt && <TaskLinks page={page} canEdit={canEdit} refreshKey={linksKey} />}
-              {!editing && <Backlinks pageId={page.id} refreshKey={`${linksKey}-${page.version}`} />}
+              <div className="kz-noprint">
+                {!editing && !page.deletedAt && <TaskLinks page={page} canEdit={canEdit} refreshKey={linksKey} />}
+                {!editing && <Backlinks pageId={page.id} refreshKey={`${linksKey}-${page.version}`} />}
+                {!editing && <PageComments page={page} user={user} refreshKey={commentsKey} />}
+              </div>
 
               {modal === 'history' && <HistoryModal page={page} canEdit={canEdit} onClose={() => setModal(null)} onRestored={(p) => { setPage((x) => ({ ...x, ...p })); setModal(null); }} />}
               {modal === 'move' && tree && <MoveModal page={page} pages={tree.pages} onClose={() => setModal(null)} onMoved={() => { setModal(null); reloadTree(); load(); }} />}
+              {modal === 'verify' && <VerificationModal page={page} onClose={() => setModal(null)} onChanged={() => api.get(`/wiki/pages/${id}`).then((r) => setPage((p) => ({ ...p, verification: r.page.verification })), setError)} />}
+              {modal === 'template' && <SaveTemplateModal page={page} onClose={() => setModal(null)} />}
               {modal === 'access' && <AccessModal page={page} onClose={() => setModal(null)} onSaved={() => { setModal(null); reloadTree(); load(); }} />}
             </article>
             {!editing && headings.filter((h) => h.level <= 3 && h.text).length >= 2 && (
