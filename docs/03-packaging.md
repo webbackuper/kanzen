@@ -62,8 +62,38 @@ kanzenctl version                 version installée
 kanzenctl check [identifiant]     configuration, base, stockage, AD (bind de service, groupes, recherche d'un compte)
 kanzenctl migrate | migrate-status
 kanzenctl create-admin <id>       administrateur local de secours (mot de passe lu sur stdin)
+kanzenctl ad-sync [--force]       synchronisation AD immédiate (départs, retours, noms, rôles), voir auth-ad.md
 kanzenctl backup                  sauvegarde immédiate
 kanzenctl restore <archive>       restauration (service arrêté)
+```
+
+## Fichiers statiques : précompression, cache et SELinux (3.1.0)
+
+- Le build (`npm run build`) génère une version `.gz` de chaque fichier de `public/assets` (`scripts/precompress.js`, zlib de Node, aucune dépendance).
+- Le modèle nginx sert `/assets/` **directement** depuis `/opt/kanzen/app/public/assets/` (`gzip_static on`, `Cache-Control: public, max-age=31536000, immutable`) et compresse les réponses JSON à la volée. `index.html` reste servi par Node, en `no-cache`, avec la CSP : une mise à jour du paquet est visible au rechargement suivant.
+- Sans nginx (conteneur, tests), Node applique les mêmes règles (`preCompressed`, mêmes en-têtes de cache).
+- **SELinux** : le `%post` du RPM déclare `/opt/kanzen/app/public(/.*)?` en `httpd_sys_content_t` (`semanage fcontext`, paquet `policycoreutils-python-utils`) puis applique `restorecon`. Sans `semanage` au moment de l'installation, lancer après coup :
+  ```bash
+  semanage fcontext -a -t httpd_sys_content_t '/opt/kanzen/app/public(/.*)?' && restorecon -Rv /opt/kanzen/app/public
+  ```
+  La règle est retirée à la désinstallation complète (pas lors d'une mise à jour).
+- **Après mise à jour du paquet, reprendre le modèle nginx** si `/etc/nginx/conf.d/kanzen.conf` date d'avant la 3.1.0 : ajouter le bloc `location /assets/` et les directives `gzip` de `/usr/share/kanzen/nginx/kanzen.conf`, puis `nginx -t && systemctl reload nginx`. Sans cela tout fonctionne, mais les fichiers restent servis par Node.
+
+Contrôle :
+```bash
+curl -sI -H 'Accept-Encoding: gzip' https://kanzen.corp.local/assets/$(ls /opt/kanzen/app/public/assets | grep -m1 '^index-.*\.js$') \
+  | grep -iE 'content-encoding|cache-control'      # gzip + immutable
+curl -sI https://kanzen.corp.local/ | grep -i cache-control   # no-cache
+```
+
+## Migrations d'index sur une grosse base
+
+La 3.1.0 ajoute trois index composites (migration `20261126090000_perf_indexes`), appliqués au démarrage du service comme toute migration. Sur une base de quelques dizaines de milliers de cartes, c'est l'affaire de quelques secondes. Sur une base très volumineuse, on peut les créer **avant** la mise à jour sans bloquer les écritures, puis la migration ne fera plus rien (`IF NOT EXISTS`) :
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Task_columnId_position_idx" ON "Task"("columnId", "position");
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Comment_taskId_createdAt_idx" ON "Comment"("taskId", "createdAt");
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "TaskEvent_toColumnId_timestamp_idx" ON "TaskEvent"("toColumnId", "timestamp");
 ```
 
 ## Mise à jour et désinstallation

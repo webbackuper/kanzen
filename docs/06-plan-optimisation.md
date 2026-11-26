@@ -5,6 +5,24 @@
 
 ---
 
+## État de réalisation : version 3.1.0 (2026-11-26)
+
+Dju a validé le lancement des trois lots de Quick Wins et la correction de **tous les constats de la section 1**, y compris ceux classés en Major Projects. Tout est livré sur la PR #3, avec les tests associés.
+
+| Constat (section 1) | Réalisé | Vérification |
+|---|---|---|
+| 1.1 Poids du front | T1 (routes en `lazy()`), T2a (`marked`, `diff`, co-édition Yjs à la demande ; coloration syntaxique en chunk séparé) | Build : `index` **794 → 338 kB** (235 → 106 kB gzip) ; wiki en lecture 923 → 733 kB ; plus d'avertissement de taille |
+| 1.2 Diffusion des assets | T3 : précompression au build, nginx `gzip_static` + cache `immutable`, gzip JSON, règle SELinux dans le RPM ; mêmes en-têtes côté Node | Ensemble des assets 1 739 → 520 kB transférés ; test d'intégration (en-têtes, gzip, `no-cache` de l'index) |
+| 1.3 Temps réel | T4 : rechargements regroupés (250 ms), écho de son propre déplacement ignoré (`X-Socket-Id`), rattrapage à la reconnexion (tableau et wiki) | Test d'intégration de l'origine ; E2E |
+| 1.4 Déplacement, positions, index | T6 : transaction + verrou de colonne + renumérotation ; T7 : 3 index composites | Tests : 60 insertions au même endroit, 2 déplacements simultanés |
+| 1.5 Arrivées / départs AD | U1 : recherche dans le groupe d'accès et création à l'ajout ; T11 : synchronisation toutes les 15 min, `kanzenctl ad-sync`, garde-fous | Tests : provisionnement, droits, départ (session coupée), retour, garde-fous |
+| 1.6 UX et accessibilité | U5 (clavier, annonces, focus des fenêtres, contrastes, badge « en retard »), U4 (filtres dans l'adresse, raccourcis), U6 (menus de colonne, suppression annulable), U8 (sauvegarde automatique en co-édition, brouillon local, indicateur) | Tests (sauvegarde auto, abandon explicite) ; E2E smoke et wiki verts |
+| Quick Wins Growth | G5 (bouton « Suggérer / signaler », `FEEDBACK_BOARD_ID`), G6 (« Quoi de neuf »), G8 (copier le lien / Markdown) | E2E (« Quoi de neuf » une seule fois) |
+
+**Reste à arbitrer** (pas de constat de défaut, ce sont des évolutions) : T2b rendu wiki sans éditeur, T5 temps réel différentiel, T8 rétention, T9 cache d'autorisation, T10 métriques, U2 modèles d'espace, U3 « Mes tâches », U9 recherche unifiée, G1 à G4 (notifications, mentions, résumé e-mail, tableau d'adoption), G7 récurrence, G9 intégrations. L'ordre recommandé en section 3 reste valable, sans U1 et T11 désormais livrés : **U3, puis G1 + G2, puis G3**.
+
+---
+
 ## 0. Synthèse pour décision
 
 KanZen est sain sur le plan sécurité (sessions serveur, CSRF, CSP stricte, autorisation par espace, durcissement systemd). Les gains rapides sont ailleurs, sur trois points :

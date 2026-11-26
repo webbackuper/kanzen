@@ -36,14 +36,14 @@ Le build se fait sur un poste Linux connecté, selon le § 1 du [plan génériqu
 ```bash
 git clone https://github.com/webbackuper/kanzen.git && cd kanzen
 git checkout <tag ou commit validé>
-packaging/build.sh 3.0.0 1
+packaging/build.sh 3.1.0 1
 cd dist && sha256sum -c SHA256SUMS
 ```
 
 Contrôle des dépendances déclarées par le RPM, **avant** le passage du sas :
 
 ```bash
-rpm -qpR kanzen-3.0.0-1.x86_64.rpm | grep -v '^rpmlib'
+rpm -qpR kanzen-3.1.0-1.x86_64.rpm | grep -v '^rpmlib'
 # Attendu :
 #   ca-certificates
 #   gzip
@@ -52,7 +52,7 @@ rpm -qpR kanzen-3.0.0-1.x86_64.rpm | grep -v '^rpmlib'
 #   shadow-utils
 #   tar
 #   util-linux
-rpm -qp --recommends kanzen-3.0.0-1.x86_64.rpm   # postgresql-server, nginx, gnupg2
+rpm -qp --recommends kanzen-3.1.0-1.x86_64.rpm   # postgresql-server, nginx, gnupg2
 ```
 
 ### 1.2 Lot de transfert pour une cible RHEL 9.6
@@ -80,11 +80,11 @@ Deux solutions, par ordre de préférence :
 2. **Signer le RPM avec une clé de l'organisation**, sur une machine RHEL/Rocky disposant de `rpm-sign`, après vérification des empreintes :
    ```bash
    # Poste de signature (clé privée détenue par l'équipe habilitée)
-   rpm --define '_gpg_name KanZen Release <rpm-signing@corp.local>' --addsign kanzen-3.0.0-1.x86_64.rpm
+   rpm --define '_gpg_name KanZen Release <rpm-signing@corp.local>' --addsign kanzen-3.1.0-1.x86_64.rpm
    gpg --export --armor rpm-signing@corp.local > RPM-GPG-KEY-kanzen
    # Cible
    rpm --import RPM-GPG-KEY-kanzen
-   rpm -K kanzen-3.0.0-1.x86_64.rpm      # attendu : digests signatures OK
+   rpm -K kanzen-3.1.0-1.x86_64.rpm      # attendu : digests signatures OK
    ```
 
 ---
@@ -403,13 +403,13 @@ Le contexte des certificats est posé au § 6.4, une fois les fichiers en place.
 ```bash
 cd /root/kanzen-livraison
 sha256sum -c --ignore-missing SHA256SUMS
-rpm -K kanzen-3.0.0-1.x86_64.rpm                      # « digests signatures OK » si signé
+rpm -K kanzen-3.1.0-1.x86_64.rpm                      # « digests signatures OK » si signé
 
 # Simulation : la résolution ne doit proposer AUCUN paquet extérieur aux miroirs internes,
 # ni PostgreSQL 13, ni nodejs
-dnf install --assumeno ./kanzen-3.0.0-1.x86_64.rpm
+dnf install --assumeno ./kanzen-3.1.0-1.x86_64.rpm
 
-dnf install -y ./kanzen-3.0.0-1.x86_64.rpm            # ou : dnf install -y kanzen (dépôt interne)
+dnf install -y ./kanzen-3.1.0-1.x86_64.rpm            # ou : dnf install -y kanzen (dépôt interne)
 kanzenctl version
 ```
 
