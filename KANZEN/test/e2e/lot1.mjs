@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs';
 import { chromium } from 'playwright';
 
 const PORT = 3998;
@@ -23,7 +24,11 @@ const step = (s) => console.log(`• ${s}`);
 try {
   for (let i = 0; i < 50; i++) { try { if ((await fetch(`${BASE}/api/health`)).ok) break; } catch { /* démarrage */ } await sleep(200); }
   browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  // « Quoi de neuf » déjà vu (testé dans smoke.mjs)
+  const { version } = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  await ctx.addInitScript((v) => { try { localStorage.setItem('kz-seen-version', v); } catch { /* */ } }, version);
+  const page = await ctx.newPage();
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('response', async (r) => { if (r.status() >= 400) httpErrors.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`); });
@@ -52,9 +57,10 @@ try {
   // --- Détail : étiquette, priorité, dates ---
   await page.getByText('Inventaire des VM').click();
   await page.getByRole('group', { name: 'Étiquettes' }).getByRole('button', { name: 'Sécurité' }).click();
-  await page.getByLabel('Priorité').selectOption('HIGH');
-  await page.getByLabel('Début').fill('2026-12-01');
-  await page.getByLabel('Échéance').fill('2026-12-15');
+  const dlg = page.getByRole('dialog');
+  await dlg.getByLabel('Priorité').selectOption('HIGH');
+  await dlg.getByLabel('Début').fill('2026-12-01');
+  await dlg.getByLabel('Échéance').fill('2026-12-15');
   await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
   await page.getByRole('tab', { name: /Activité/ }).click();
   await page.getByText(/a modifié .*la priorité \(Aucune → Haute\)/).waitFor();
@@ -106,7 +112,7 @@ try {
   await page.goto(`${BASE}/`);
   await page.getByText('Équipe Infra').click();
   await page.getByRole('link', { name: 'Wiki' }).last().click();
-  await page.getByRole('button', { name: 'Nouvelle page' }).click();
+  await page.getByRole('button', { name: 'Nouvelle page' }).last().click();
   await page.getByRole('button', { name: /Procédure d'exploitation/ }).click();
   await page.getByLabel('Titre de la page').fill('Renouvellement des certificats');
   await page.getByRole('button', { name: 'Enregistrer' }).click();
@@ -152,16 +158,17 @@ try {
 
   // --- Nouvelle page depuis le modèle d'équipe ---
   await page.getByRole('link', { name: 'Wiki', exact: true }).first().click();
-  await page.getByRole('button', { name: 'Nouvelle page' }).click();
+  await page.getByRole('button', { name: 'Nouvelle page' }).last().click();
   await page.getByText('Modèles de l\'équipe').waitFor();
   await shot('wiki-modeles');
-  await page.getByRole('button', { name: /Procédure PKI/ }).click();
+  await page.getByRole('button', { name: /Procédure PKI/ }).filter({ hasText: 'Procédure PKI' }).click();
   await page.getByLabel('Titre de la page').waitFor();
   assert.equal(await page.getByLabel('Titre de la page').inputValue(), 'Procédure PKI');
   await page.getByRole('button', { name: 'Enregistrer' }).click();
   step('nouvelle page depuis un modèle d\'équipe');
 
-  const unexpected = errors.filter((e) => !/401|409/.test(e));
+  // 410 : images des pages créées par wiki.mjs, dont le stockage temporaire n'existe plus pour ce serveur
+  const unexpected = errors.filter((e) => !/401|409|410/.test(e));
   assert.deepEqual(unexpected, [], 'erreurs navigateur (CSP, JS)');
   console.log('OK : parcours lot 1 complet');
 } catch (err) {

@@ -13,6 +13,18 @@ import { api, setSocketId } from '../api';
 import { ErrorBox, Loading, Modal, Toast, btnGhost, btnPrimary, input, isTyping } from '../ui';
 
 const UNDO_MS = 8000;
+
+// Glisser une colonne : seules les autres colonnes sont des cibles (sinon les cartes de la colonne elle-même
+// captent le déplacement, au clavier comme à la souris)
+const isColumnDrag = (active) => active?.data.current?.type === 'column';
+const onlyColumns = (containers) => containers.filter((c) => c.data.current?.type === 'column');
+const collisionDetection = (args) => closestCorners(isColumnDrag(args.active) ? { ...args, droppableContainers: onlyColumns(args.droppableContainers) } : args);
+const keyboardCoordinates = (event, args) => {
+  if (!isColumnDrag(args.context.active)) return sortableKeyboardCoordinates(event, args);
+  const all = args.context.droppableContainers;
+  const droppableContainers = { getEnabled: () => onlyColumns(all.getEnabled()), get: (id) => all.get(id) };
+  return sortableKeyboardCoordinates(event, { ...args, context: { ...args.context, droppableContainers } });
+};
 const COLOR_LABEL = { white: 'Blanc', red: 'Rouge', orange: 'Orange', yellow: 'Jaune', green: 'Vert', blue: 'Bleu', purple: 'Violet', gray: 'Gris' };
 
 // Annonces en français pour les lecteurs d'écran pendant un déplacement au clavier ou à la souris
@@ -99,7 +111,7 @@ export function KanbanBoard({ user }) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     // Espace prend / pose la carte (Entrée reste réservée à l'ouverture de la carte), Échap annule
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates, keyboardCodes: { start: ['Space'], cancel: ['Escape'], end: ['Space'] } }),
+    useSensor(KeyboardSensor, { coordinateGetter: keyboardCoordinates, keyboardCodes: { start: ['Space'], cancel: ['Escape'], end: ['Space'] } }),
   );
 
   // Colonnes affichées : suppression en attente masquée, filtres appliqués (le total réel reste visible pour le WIP)
@@ -220,24 +232,24 @@ export function KanbanBoard({ user }) {
       </div>
       <form role="search" aria-label="Filtrer les cartes" className="px-6 pt-3 flex flex-wrap items-center gap-2 text-sm" onSubmit={(e) => e.preventDefault()}>
         <Filter size={14} className="text-gray-500 dark:text-gray-400" aria-hidden="true" />
-        <input ref={filterRef} className={`${input} w-56 py-1`} placeholder="Filtrer (touche /)" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Texte recherché dans les cartes" maxLength={100} />
-        <select className={`${input} w-48 py-1`} value={who} onChange={(e) => setFilter('who', e.target.value)} aria-label="Assigné">
+        <input ref={filterRef} className={`${input} !w-56 py-1`} placeholder="Filtrer (touche /)" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Texte recherché dans les cartes" maxLength={100} />
+        <select className={`${input} !w-48 py-1`} value={who} onChange={(e) => setFilter('who', e.target.value)} aria-label="Assigné">
           <option value="">Tous les assignés</option>
           <option value="me">Mes cartes</option>
           <option value="none">Non assignées</option>
           {members.map((m) => <option key={m.id} value={m.id}>{m.displayName}</option>)}
         </select>
-        <select className={`${input} w-36 py-1`} value={color} onChange={(e) => setFilter('color', e.target.value)} aria-label="Couleur">
+        <select className={`${input} !w-36 py-1`} value={color} onChange={(e) => setFilter('color', e.target.value)} aria-label="Couleur">
           <option value="">Toutes couleurs</option>
           {Object.entries(COLOR_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
         {board.labels.length > 0 && (
-          <select className={`${input} w-40 py-1`} value={labelF} onChange={(e) => setFilter('label', e.target.value)} aria-label="Étiquette">
+          <select className={`${input} !w-40 py-1`} value={labelF} onChange={(e) => setFilter('label', e.target.value)} aria-label="Étiquette">
             <option value="">Toutes étiquettes</option>
             {board.labels.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
         )}
-        <select className={`${input} w-36 py-1`} value={prio} onChange={(e) => setFilter('prio', e.target.value)} aria-label="Priorité">
+        <select className={`${input} !w-36 py-1`} value={prio} onChange={(e) => setFilter('prio', e.target.value)} aria-label="Priorité">
           <option value="">Toutes priorités</option>
           {PRIORITIES.filter((p) => p.value !== 'NONE').map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
@@ -249,7 +261,7 @@ export function KanbanBoard({ user }) {
       </form>
       {error && <div className="px-6 pt-3"><ErrorBox error={error} /></div>}
       <div className="flex-1 overflow-x-auto overflow-y-hidden p-6">
-        <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={onDragEnd}
+        <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragEnd={onDragEnd}
           accessibility={{
             screenReaderInstructions: { draggable: 'Carte déplaçable : Entrée pour l\'ouvrir. Espace pour la prendre, flèches pour la déplacer, Espace pour la poser, Échap pour annuler.' },
             announcements: {
