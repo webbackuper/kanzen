@@ -23,6 +23,7 @@ Les § 5 à 7 déroulent ensuite l'installation, dans l'ordre d'exécution. Les 
 - **Node.js n'est pas à installer** : le RPM embarque son propre runtime (Node.js 24 LTS, binaire officiel) dans `/opt/kanzen/node`. Le module AppStream `nodejs` est inutile ; ne pas l'installer réduit la surface d'attaque.
 - **Deux modules AppStream doivent être activés avant toute installation** : `postgresql:16` et `nginx:1.26`. Les versions par défaut de RHEL 9 (PostgreSQL 13 et nginx 1.20) ne conviennent pas.
 - **Les miroirs internes doivent publier les métadonnées de modules** (`modules.yaml`). Sans elles, `dnf module` ne voit aucun flux et l'installation part sur les mauvaises versions. C'est le premier point à vérifier avec l'équipe qui gère les dépôts (§ 2.2).
+- **Version de référence : `kanzen-3.2.0-2.x86_64.rpm`.** Par rapport à la 3.1.0, elle n'ajoute **aucun prérequis** système ni réseau, aucune variable de configuration et aucun flux de pare-feu ; ses deux migrations de schéma ne font qu'ajouter des tables et colonnes et s'appliquent seules au démarrage (§ 7.2). Le RPM `3.2.0-1` est antérieur aux correctifs de sécurité de la revue (identité AD, révocation des websockets) : ne pas le faire entrer par le sas.
 - Deux corrections ont été apportées au paquet à l'occasion de cette vérification (§ 3.3) : le modèle nginx ne démarrait pas avec les versions de nginx livrées par RHEL 9, et le RPM accepte désormais uniquement un client PostgreSQL 14 ou plus.
 
 ---
@@ -36,14 +37,14 @@ Le build se fait sur un poste Linux connecté, selon le § 1 du [plan génériqu
 ```bash
 git clone https://github.com/webbackuper/kanzen.git && cd kanzen
 git checkout <tag ou commit validé>
-packaging/build.sh 3.1.0 1
+packaging/build.sh 3.2.0 2
 cd dist && sha256sum -c SHA256SUMS
 ```
 
 Contrôle des dépendances déclarées par le RPM, **avant** le passage du sas :
 
 ```bash
-rpm -qpR kanzen-3.1.0-1.x86_64.rpm | grep -v '^rpmlib'
+rpm -qpR kanzen-3.2.0-2.x86_64.rpm | grep -v '^rpmlib'
 # Attendu :
 #   ca-certificates
 #   gzip
@@ -52,7 +53,7 @@ rpm -qpR kanzen-3.1.0-1.x86_64.rpm | grep -v '^rpmlib'
 #   shadow-utils
 #   tar
 #   util-linux
-rpm -qp --recommends kanzen-3.1.0-1.x86_64.rpm   # postgresql-server, nginx, gnupg2
+rpm -qp --recommends kanzen-3.2.0-2.x86_64.rpm   # postgresql-server, nginx, gnupg2
 ```
 
 ### 1.2 Lot de transfert pour une cible RHEL 9.6
@@ -80,11 +81,11 @@ Deux solutions, par ordre de préférence :
 2. **Signer le RPM avec une clé de l'organisation**, sur une machine RHEL/Rocky disposant de `rpm-sign`, après vérification des empreintes :
    ```bash
    # Poste de signature (clé privée détenue par l'équipe habilitée)
-   rpm --define '_gpg_name KanZen Release <rpm-signing@corp.local>' --addsign kanzen-3.1.0-1.x86_64.rpm
+   rpm --define '_gpg_name KanZen Release <rpm-signing@corp.local>' --addsign kanzen-3.2.0-2.x86_64.rpm
    gpg --export --armor rpm-signing@corp.local > RPM-GPG-KEY-kanzen
    # Cible
    rpm --import RPM-GPG-KEY-kanzen
-   rpm -K kanzen-3.1.0-1.x86_64.rpm      # attendu : digests signatures OK
+   rpm -K kanzen-3.2.0-2.x86_64.rpm      # attendu : digests signatures OK
    ```
 
 ---
@@ -284,6 +285,10 @@ Objets à créer au préalable : voir [`auth-ad.md`](auth-ad.md).
 | Un compte AD de test, membre du groupe d'accès | `jdupont` | `kanzenctl check jdupont` |
 | Identifiant de l'administrateur local de secours | `secours` | `kanzenctl create-admin` |
 
+**Identifiants réattribués.** KanZen rattache un compte à son **objectGUID**, pas à son `sAMAccountName` : un identifiant réattribué à un nouvel agent n'hérite jamais des espaces ni des pages de l'ancien titulaire (détail : [`auth-ad.md`](auth-ad.md#départs-et-mutations--synchronisation-ad)). Deux points à faire confirmer par l'équipe AD :
+- la politique de **réemploi des identifiants** (homonymes, retours d'agents avec un nouveau compte) : tant que l'ancien compte KanZen est actif, la connexion du nouveau titulaire est refusée, et un administrateur KanZen doit d'abord désactiver l'ancien compte ;
+- toute **migration de domaine (ADMT)** prévue : elle change les objectGUID et crée donc de nouveaux comptes KanZen, droits à redonner.
+
 ### 4.5 Base de données
 
 | Information | Valeur par défaut | Remarque |
@@ -403,13 +408,13 @@ Le contexte des certificats est posé au § 6.4, une fois les fichiers en place.
 ```bash
 cd /root/kanzen-livraison
 sha256sum -c --ignore-missing SHA256SUMS
-rpm -K kanzen-3.1.0-1.x86_64.rpm                      # « digests signatures OK » si signé
+rpm -K kanzen-3.2.0-2.x86_64.rpm                      # « digests signatures OK » si signé
 
 # Simulation : la résolution ne doit proposer AUCUN paquet extérieur aux miroirs internes,
 # ni PostgreSQL 13, ni nodejs
-dnf install --assumeno ./kanzen-3.1.0-1.x86_64.rpm
+dnf install --assumeno ./kanzen-3.2.0-2.x86_64.rpm
 
-dnf install -y ./kanzen-3.1.0-1.x86_64.rpm            # ou : dnf install -y kanzen (dépôt interne)
+dnf install -y ./kanzen-3.2.0-2.x86_64.rpm            # ou : dnf install -y kanzen (dépôt interne)
 kanzenctl version
 ```
 
@@ -499,6 +504,8 @@ curl -fsS https://kanzen.corp.local/api/health          # {"status":"ok"}
 # Contrôles propres à RHEL
 ps -eZ | grep -E 'kanzen|node|nginx'     # node : unconfined_service_t ; nginx : httpd_t
 ausearch -m AVC -ts recent               # aucune ligne attendue
+# Révocation : désactiver un compte de test dans l'AD (ou le retirer du groupe), puis
+kanzenctl ad-sync                        # compte désactivé ; ses onglets ouverts perdent le temps réel en 60 s au plus
 kanzenctl backup && ls -l /var/backups/kanzen/
 ```
 
@@ -522,10 +529,10 @@ systemctl restart postgresql nginx kanzen    # ou redémarrage planifié de la V
 
 ```bash
 kanzenctl backup
-dnf install -y ./kanzen-3.1.0-1.x86_64.rpm   # ou dnf update kanzen (dépôt interne)
+dnf install -y ./kanzen-3.2.0-2.x86_64.rpm   # ou dnf update kanzen (dépôt interne)
 ```
 
-Le paquet redémarre le service s'il tournait ; les migrations de schéma s'appliquent au démarrage. `/etc/kanzen/kanzen.env` n'est jamais écrasé (`%config(noreplace)`) ; s'il a été modifié, la nouvelle version du modèle est déposée en `kanzen.env.rpmnew`, à comparer.
+Le paquet redémarre le service s'il tournait ; les migrations de schéma s'appliquent au démarrage. Pour la montée 3.1.0 vers 3.2.0-2, ce sont `20261126120000_kanban_wiki_lot1` et `20261126140000_kanban_wiki_lot2_3`, qui ne font qu'ajouter des tables et des colonnes (aucune suppression ni réécriture de données) : `journalctl -u kanzen -b | grep -i migration` doit les montrer appliquées. Les diagrammes Mermaid et l'impression du wiki sont embarqués dans l'interface : rien à ouvrir, aucun CDN. `/etc/kanzen/kanzen.env` n'est jamais écrasé (`%config(noreplace)`) ; s'il a été modifié, la nouvelle version du modèle est déposée en `kanzen.env.rpmnew`, à comparer.
 
 ### 7.3 Suivi des vulnérabilités
 
