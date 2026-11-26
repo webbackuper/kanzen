@@ -45,9 +45,30 @@ export function PriorityIcon({ priority, size = 14 }) {
 
 const FIELD = {
   title: 'le titre', description: 'la description', color: 'la couleur', priority: 'la priorité', dueDate: 'l\'échéance',
-  startDate: 'la date de début', assignees: 'les assignés', labels: 'les étiquettes',
+  startDate: 'la date de début', assignees: 'les assignés', labels: 'les étiquettes', estimate: 'l\'estimation',
 };
 const fmtDay = (d) => (d ? new Date(`${d}T12:00:00Z`).toLocaleDateString('fr-FR') : 'aucune');
+
+const fmtValue = (v) => (v === null || v === undefined || v === '' ? 'vide' : v === true ? 'oui' : v === false ? 'non'
+  : /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? fmtDay(v) : `« ${v} »`);
+
+/** Types de champs personnalisés : mêmes clés que le serveur (routes/boards.js, FIELD_TYPES). */
+export const FIELD_TYPES = [
+  { value: 'TEXT', label: 'Texte' },
+  { value: 'NUMBER', label: 'Nombre' },
+  { value: 'DATE', label: 'Date' },
+  { value: 'SELECT', label: 'Liste de choix' },
+  { value: 'CHECKBOX', label: 'Case à cocher' },
+];
+
+/** Valeur d'un champ personnalisé pour l'affichage (carte, liste). */
+export function fieldText(field, v) {
+  if (v === undefined || v === null || v === '') return '';
+  if (field.type === 'CHECKBOX') return v ? 'Oui' : 'Non';
+  if (field.type === 'DATE') return fmtDay(v);
+  if (field.type === 'NUMBER') return Number(v).toLocaleString('fr-FR');
+  return String(v);
+}
 
 /** Phrase lisible d'une entrée du journal d'activité. */
 export function describeActivity(a) {
@@ -60,6 +81,8 @@ export function describeActivity(a) {
     case 'comment': return 'a commenté';
     case 'attachment': return `a joint « ${d.filename} »`;
     case 'duplicate': return `a créé la carte en dupliquant « ${d.fromTitle} »`;
+    case 'dependency': return d.added ? `a indiqué que la carte est bloquée par « ${d.added} »` : `a retiré le blocage par « ${d.removed} »`;
+    case 'field': return `a modifié le champ « ${d.name} » (${fmtValue(d.from)} → ${fmtValue(d.to)})`;
     case 'transfer': return `a transféré la carte du tableau « ${d.fromBoard} » vers « ${d.toBoard} » (${d.to})`;
     case 'update': return `a modifié ${(d.changes ?? []).map((c) => {
       if (c.field === 'priority') return `la priorité (${PRIORITY[c.from]?.label} → ${PRIORITY[c.to]?.label})`;
@@ -68,6 +91,7 @@ export function describeActivity(a) {
         const parts = [...(c.added ?? []).map((n) => `+${n}`), ...(c.removed ?? []).map((n) => `−${n}`)];
         return `${FIELD[c.field]} (${parts.join(', ')})`;
       }
+      if (c.field === 'estimate') return `l'estimation (${c.from ?? 'aucune'} → ${c.to ?? 'aucune'})`;
       if (c.field === 'title') return `le titre (« ${c.from} » → « ${c.to} »)`;
       return FIELD[c.field] ?? c.field;
     }).join(', ')}`;

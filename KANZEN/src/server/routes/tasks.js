@@ -12,6 +12,7 @@ const taskProps = {
   dueDate: { type: ['string', 'null'], format: 'date-time' },
   startDate: { type: ['string', 'null'], format: 'date-time' },
   priority: { enum: PRIORITIES },
+  estimate: { type: ['number', 'null'], minimum: 0, maximum: 100000 },
   // Affectation multiple : liste complète des assignés (remplace la liste existante)
   assigneeIds: uuidList(25),
   // Étiquettes du tableau : liste complète (remplace la liste existante)
@@ -54,8 +55,33 @@ export async function placeAt(tx, siblings, index) {
   return (index + 1) * STEP;
 }
 
+const depTaskSel = { id: true, title: true, archivedAt: true, column: { select: { id: true, title: true, boardId: true, board: { select: { title: true } } } } };
+
+/** Validation d'une valeur de champ personnalisé selon son type ; null efface la valeur. */
+export function checkFieldValue(field, value) {
+  if (value === null) return null;
+  switch (field.type) {
+    case 'TEXT': if (typeof value === 'string' && value.length <= 500) return value; break;
+    case 'NUMBER': if (typeof value === 'number' && Number.isFinite(value)) return value; break;
+    case 'DATE': if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value))) return value; break;
+    case 'SELECT': if (typeof value === 'string' && field.options.includes(value)) return value; break;
+    case 'CHECKBOX': if (typeof value === 'boolean') return value; break;
+    default:
+  }
+  throw badRequest(`Valeur invalide pour le champ « ${field.name} »`);
+}
+
 export default async function taskRoutes(app) {
   const { prisma, authz, realtime } = app;
+  /** Dernière colonne (« terminé ») de chaque tableau cité. */
+  async function lastColumnIds(boardIds) {
+    const ids = [...new Set(boardIds)];
+    if (!ids.length) return new Set();
+    const cols = await prisma.column.findMany({ where: { boardId: { in: ids } }, select: { id: true, boardId: true, position: true }, orderBy: { position: 'desc' } });
+    const last = new Map();
+    for (const c of cols) if (!last.has(c.boardId)) last.set(c.boardId, c.id);
+    return new Set(last.values());
+  }
   const auth = { onRequest: [app.requireUser] };
   const boardOfColumn = async (columnId) => (await prisma.column.findUnique({ where: { id: columnId }, select: { boardId: true } })).boardId;
   const boardOfTask = async (taskId) => (await prisma.task.findUnique({ where: { id: taskId }, select: { column: { select: { boardId: true } } } })).column.boardId;
@@ -95,6 +121,7 @@ export default async function taskRoutes(app) {
     if (before.description !== after.description) changes.push({ field: 'description' });
     if (before.color !== after.color) changes.push({ field: 'color', from: before.color, to: after.color });
     if (before.priority !== after.priority) changes.push({ field: 'priority', from: before.priority, to: after.priority });
+    if ((before.estimate ?? null) !== (after.estimate ?? null)) changes.push({ field: 'estimate', from: before.estimate ?? null, to: after.estimate ?? null });
     if (day(before.dueDate) !== day(after.dueDate)) changes.push({ field: 'dueDate', from: day(before.dueDate), to: day(after.dueDate) });
     if (day(before.startDate) !== day(after.startDate)) changes.push({ field: 'startDate', from: day(before.startDate), to: day(after.startDate) });
     const diffIds = (a, b) => ({ added: b.filter((x) => !a.includes(x)), removed: a.filter((x) => !b.includes(x)) });
@@ -143,18 +170,26 @@ export default async function taskRoutes(app) {
       where: { id: req.params.id },
       include: {
         ...taskInclude,
-        column: { select: { id: true, title: true, boardId: true, board: { select: { labels: { orderBy: { position: 'asc' } } } } } },
+        column: { select: { id: true, title: true, boardId: true, board: { select: { labels: { orderBy: { position: 'asc' } }, fields: { orderBy: { position: 'asc' } } } } } },
+        fieldValues: { select: { fieldId: true, value: true } },
+        blockedBy: { select: { blocker: { select: depTaskSel } } },
+        blocks: { select: { blocked: { select: depTaskSel } } },
         createdBy: { select: { id: true, displayName: true } },
         subtasks: { orderBy: { position: 'asc' } },
         comments: { orderBy: { createdAt: 'asc' }, include: { author: { select: { id: true, displayName: true } } } },
         attachments: { orderBy: { uploadedAt: 'asc' }, select: { id: true, filename: true, mimetype: true, size: true, uploadedAt: true } },
       },
     });
-    const { column, ...rest } = task;
+    const { column, fieldValues, blockedBy, blocks, ...rest } = task;
+    const doneOf = await lastColumnIds([...blockedBy.map((d) => d.blocker), ...blocks.map((d) => d.blocked)].map((t) => t.column.boardId));
+    const dep = (t) => ({ id: t.id, title: t.title, boardId: t.column.boardId, boardTitle: t.column.board.title, column: t.column.title, done: Boolean(t.archivedAt) || doneOf.has(t.column.id) });
     return {
       task: {
         ...flatTask(rest), myRole: role, boardId: column.boardId,
-        column: { id: column.id, title: column.title }, boardLabels: column.board.labels,
+        column: { id: column.id, title: column.title }, boardLabels: column.board.labels, boardFields: column.board.fields,
+        fieldValues: Object.fromEntries(fieldValues.map((v) => [v.fieldId, v.value])),
+        blockedBy: blockedBy.map((d) => dep(d.blocker)),
+        blocks: blocks.map((d) => dep(d.blocked)),
       },
     };
   });
@@ -253,13 +288,14 @@ export default async function taskRoutes(app) {
     schema: { params: idParam, body: { type: 'object', additionalProperties: false, properties: { title: taskProps.title } } },
   }, async (req, reply) => {
     await authz.check(req.user, 'task', req.params.id, 'EDITOR');
-    const src = await prisma.task.findUnique({ where: { id: req.params.id }, include: { ...taskInclude, subtasks: { orderBy: { position: 'asc' } }, column: { select: { boardId: true } } } });
+    const src = await prisma.task.findUnique({ where: { id: req.params.id }, include: { ...taskInclude, subtasks: { orderBy: { position: 'asc' } }, fieldValues: true, column: { select: { boardId: true } } } });
     const next = await prisma.task.findFirst({ where: { columnId: src.columnId, position: { gt: src.position } }, orderBy: { position: 'asc' }, select: { position: true } });
     const position = next ? (src.position + next.position) / 2 : src.position + 1000;
     const copy = flatTask(await prisma.task.create({
       data: {
         title: req.body?.title ?? `${src.title} (copie)`.slice(0, 300),
-        description: src.description, color: src.color, priority: src.priority, dueDate: src.dueDate, startDate: src.startDate,
+        description: src.description, color: src.color, priority: src.priority, dueDate: src.dueDate, startDate: src.startDate, estimate: src.estimate,
+        fieldValues: { create: src.fieldValues.map((v) => ({ fieldId: v.fieldId, value: v.value })) },
         columnId: src.columnId, position, createdById: req.user.id,
         assignees: { create: src.assignees.map((a) => ({ userId: a.user.id })) },
         labels: { create: src.labels.map((l) => ({ labelId: l.labelId })) },
@@ -283,13 +319,19 @@ export default async function taskRoutes(app) {
     const { workspaceId } = await authz.check(req.user, 'task', req.params.id, 'EDITOR');
     const target = await authz.check(req.user, 'board', req.body.boardId, 'EDITOR');
     if (target.workspaceId !== workspaceId) throw badRequest('Le tableau cible doit appartenir au même espace');
-    const task = await prisma.task.findUnique({ where: { id: req.params.id }, include: { column: { select: { title: true, boardId: true, board: { select: { title: true } } } }, labels: { include: { label: true } } } });
+    const task = await prisma.task.findUnique({ where: { id: req.params.id }, include: { column: { select: { title: true, boardId: true, board: { select: { title: true } } } }, labels: { include: { label: true } }, fieldValues: { include: { field: true } } } });
     if (task.column.boardId === req.body.boardId) throw badRequest('La carte est déjà sur ce tableau');
     const column = req.body.columnId
       ? await prisma.column.findFirst({ where: { id: req.body.columnId, boardId: req.body.boardId } })
       : await prisma.column.findFirst({ where: { boardId: req.body.boardId }, orderBy: { position: 'asc' } });
     if (!column) throw badRequest('Colonne cible invalide');
-    const targetBoard = await prisma.board.findUnique({ where: { id: req.body.boardId }, select: { title: true, labels: true } });
+    const targetBoard = await prisma.board.findUnique({ where: { id: req.body.boardId }, select: { title: true, labels: true, fields: true } });
+    // Champs personnalisés : valeur reprise si le tableau cible a un champ de même nom et de même type
+    const fieldValues = [];
+    for (const v of task.fieldValues) {
+      const same = targetBoard.fields.find((f) => f.name.toLowerCase() === v.field.name.toLowerCase() && f.type === v.field.type);
+      if (same && (same.type !== 'SELECT' || same.options.includes(v.value))) fieldValues.push({ fieldId: same.id, value: v.value });
+    }
 
     const labelIds = [];
     let pos = (targetBoard.labels.reduce((m, l) => Math.max(m, l.position), 0)) + 1000;
@@ -305,7 +347,9 @@ export default async function taskRoutes(app) {
     const last = await prisma.task.findFirst({ where: { columnId: column.id }, orderBy: { position: 'desc' } });
     await prisma.task.update({
       where: { id: task.id },
-      data: { columnId: column.id, position: (last?.position ?? 0) + 1000, labels: { deleteMany: {}, create: labelIds.map((labelId) => ({ labelId })) } },
+      data: { columnId: column.id, position: (last?.position ?? 0) + 1000, labels: { deleteMany: {}, create: labelIds.map((labelId) => ({ labelId })) },
+        fieldValues: { deleteMany: {}, create: fieldValues },
+      },
     });
     await prisma.taskEvent.create({ data: { taskId: task.id, fromColumnId: task.columnId, toColumnId: column.id, actorId: req.user.id } });
     await activity(task.id, req.user.id, 'transfer', { fromBoard: task.column.board.title, toBoard: targetBoard.title, to: column.title });
@@ -322,6 +366,75 @@ export default async function taskRoutes(app) {
     await app.removeStoredFiles(attachments.map((a) => a.storageName));
     realtime.boardChanged(boardId, 'task', req);
     return { ok: true };
+  });
+
+  // --- Dépendances : « cette carte est bloquée par… » (même espace, sans cycle) ---
+  app.post('/tasks/:id/dependencies', {
+    ...auth,
+    schema: { params: idParam, body: { type: 'object', required: ['blockerId'], additionalProperties: false, properties: { blockerId: uuid } } },
+  }, async (req, reply) => {
+    const { workspaceId } = await authz.check(req.user, 'task', req.params.id, 'EDITOR');
+    const blockerId = req.body.blockerId;
+    if (blockerId === req.params.id) throw badRequest('Une carte ne peut pas se bloquer elle-même');
+    const other = await authz.check(req.user, 'task', blockerId, 'VIEWER');
+    if (other.workspaceId !== workspaceId) throw badRequest('La carte bloquante doit appartenir au même espace');
+    // Cycle : la carte bloquante ne doit pas déjà dépendre (directement ou non) de celle-ci
+    const seen = new Set([blockerId]);
+    let frontier = [blockerId];
+    for (let depth = 0; frontier.length && depth < 100; depth++) {
+      const rows = await prisma.taskDependency.findMany({ where: { blockedId: { in: frontier } }, select: { blockerId: true } });
+      frontier = [];
+      for (const r of rows) {
+        if (r.blockerId === req.params.id) throw badRequest('Dépendance circulaire : cette carte bloque déjà, directement ou non, la carte choisie');
+        if (!seen.has(r.blockerId)) { seen.add(r.blockerId); frontier.push(r.blockerId); }
+      }
+    }
+    const exists = await prisma.taskDependency.findUnique({ where: { blockerId_blockedId: { blockerId, blockedId: req.params.id } } });
+    if (!exists) {
+      await prisma.taskDependency.create({ data: { blockerId, blockedId: req.params.id, createdById: req.user.id } });
+      const b = await prisma.task.findUnique({ where: { id: blockerId }, select: { title: true, column: { select: { boardId: true } } } });
+      await activity(req.params.id, req.user.id, 'dependency', { added: b.title });
+      realtime.boardChanged(await boardOfTask(req.params.id), 'task', req);
+      if (b.column.boardId !== await boardOfTask(req.params.id)) realtime.boardChanged(b.column.boardId, 'task', req);
+    }
+    return reply.code(exists ? 200 : 201).send({ ok: true });
+  });
+
+  app.delete('/tasks/:id/dependencies/:blockerId', {
+    ...auth,
+    schema: { params: { type: 'object', required: ['id', 'blockerId'], properties: { id: uuid, blockerId: uuid } } },
+  }, async (req) => {
+    await authz.check(req.user, 'task', req.params.id, 'EDITOR');
+    const { count } = await prisma.taskDependency.deleteMany({ where: { blockerId: req.params.blockerId, blockedId: req.params.id } });
+    if (count) {
+      const b = await prisma.task.findUnique({ where: { id: req.params.blockerId }, select: { title: true } });
+      await activity(req.params.id, req.user.id, 'dependency', { removed: b?.title ?? '?' });
+      realtime.boardChanged(await boardOfTask(req.params.id), 'task', req);
+    }
+    return { ok: true };
+  });
+
+  // --- Champs personnalisés : valeur d'un champ sur une carte ---
+  app.put('/tasks/:id/fields/:fieldId', {
+    ...auth,
+    schema: {
+      params: { type: 'object', required: ['id', 'fieldId'], properties: { id: uuid, fieldId: uuid } },
+      body: { type: 'object', required: ['value'], additionalProperties: false, properties: { value: {} } }, // type vérifié par checkFieldValue (pas de coercition Ajv : « 42 » reste un texte, true un booléen)
+    },
+  }, async (req) => {
+    await authz.check(req.user, 'task', req.params.id, 'EDITOR');
+    const boardId = await boardOfTask(req.params.id);
+    const field = await prisma.boardField.findFirst({ where: { id: req.params.fieldId, boardId } });
+    if (!field) throw badRequest('Champ inconnu sur ce tableau');
+    const value = checkFieldValue(field, req.body.value);
+    const key = { taskId_fieldId: { taskId: req.params.id, fieldId: field.id } };
+    const before = await prisma.taskFieldValue.findUnique({ where: key });
+    if (value === null || value === '') await prisma.taskFieldValue.deleteMany({ where: { taskId: req.params.id, fieldId: field.id } });
+    else await prisma.taskFieldValue.upsert({ where: key, create: { taskId: req.params.id, fieldId: field.id, value }, update: { value } });
+    const to = value === '' ? null : value;
+    if ((before?.value ?? null) !== to) await activity(req.params.id, req.user.id, 'field', { name: field.name, from: before?.value ?? null, to });
+    realtime.boardChanged(boardId, 'task', req);
+    return { value: to };
   });
 
   // --- Journal d'activité ---

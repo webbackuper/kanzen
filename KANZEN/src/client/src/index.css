@@ -67,6 +67,25 @@
   .kz-prose .kz-callout-danger { @apply bg-red-50 dark:bg-red-900/20 border-red-500; }
   .kz-prose .kz-callout-danger::before { @apply text-red-700 dark:text-red-300; }
 
+  /* Blocs dynamiques : sous-pages, sommaire, diagrammes */
+  .kz-prose .kz-block { @apply rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50/60 dark:bg-slate-800/40 px-4 py-3; }
+  .kz-prose .kz-block-selected { @apply ring-2 ring-indigo-500; }
+  .kz-prose .kz-block-title { @apply flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5; }
+  .kz-prose .kz-block-empty { @apply text-sm text-gray-500 dark:text-gray-400; }
+  .kz-prose .kz-subpages-list, .kz-prose .kz-subpages-nested { @apply list-none space-y-1 pl-0; }
+  .kz-prose .kz-subpages-nested { @apply pl-5 mt-1 border-l border-gray-200 dark:border-slate-700; }
+  .kz-prose .kz-subpages-link { @apply inline-flex items-center gap-1.5 text-indigo-700 dark:text-indigo-300 no-underline hover:underline; }
+  .kz-prose .kz-toc-list { @apply list-none pl-0 space-y-0.5 text-sm; }
+  .kz-prose .kz-toc-list a { @apply text-indigo-700 dark:text-indigo-300 no-underline hover:underline; }
+  .kz-prose .kz-hidden { display: none; }
+  .kz-prose .kz-mermaid-box { @apply relative rounded-b-lg border border-t-0 border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 overflow-x-auto; }
+  .kz-prose pre.kz-hidden + .kz-mermaid-box { @apply border-t rounded-t-lg; }
+  .kz-prose .kz-mermaid { @apply flex justify-center; }
+  .kz-prose .kz-mermaid svg { max-width: 100%; height: auto; }
+  .kz-prose .kz-mermaid-toggle { @apply absolute right-2 top-2 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-indigo-600 z-10; }
+  .kz-prose .kz-mermaid-error { @apply text-sm text-red-700 dark:text-red-300; }
+  .kz-print-only { display: none; }
+
   .kz-prose .kz-details { @apply flex gap-1 rounded-lg border border-gray-200 dark:border-slate-700 px-2 py-1.5; }
   .kz-prose .kz-details > button { @apply mt-0.5 w-5 h-5 shrink-0 flex items-center justify-center rounded text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800; }
   .kz-prose .kz-details > button::before { content: '▸'; @apply transition-transform; }
@@ -83,10 +102,31 @@
 }
 
 @media print {
-  nav, aside, .kz-noprint, [role="toolbar"] { display: none !important; }
-  body, .kz-prose { background: white !important; color: black !important; }
-  .kz-prose pre { white-space: pre-wrap; border: 1px solid #ccc; }
+  /* Mise en page d'impression / PDF : A4, marges, numéros de page, aucun élément d'interface */
+  @page { size: A4; margin: 16mm 15mm 18mm; @bottom-right { content: counter(page) " / " counter(pages); font-size: 9pt; color: #555; } }
+  html, body, #root, main, .h-screen, .h-full, .overflow-auto, .overflow-hidden, .overflow-y-auto {
+    height: auto !important; max-height: none !important; overflow: visible !important;
+  }
+  html { color-scheme: light; }
+  html, body, #root, #root > div, main { background: white !important; }
+  nav:not(.kz-toc), aside, .kz-noprint, [role="toolbar"], .kz-code-bar, .kz-mermaid-toggle { display: none !important; }
+  .kz-print-only { display: block !important; }
+  body, .kz-prose, article { background: white !important; color: black !important; }
+  article { max-width: none !important; }
+  .kz-prose { font-size: 10.5pt; line-height: 1.45; orphans: 3; widows: 3; }
+  .kz-prose h1, .kz-prose h2, .kz-prose h3, .kz-prose h4 { break-after: avoid; page-break-after: avoid; color: black !important; }
+  .kz-prose pre, .kz-prose table, .kz-prose img, .kz-prose .kz-callout, .kz-prose .kz-mermaid-box, .kz-prose .kz-file, .kz-prose .kz-block { break-inside: avoid; page-break-inside: avoid; }
+  .kz-prose pre, .kz-prose pre.hljs { white-space: pre-wrap; word-break: break-word; border: 1px solid #bbb; background: #f6f6f6 !important; color: #111 !important; }
+  .kz-prose pre.hljs * { color: #111 !important; }
+  .kz-prose pre.kz-hidden { display: none !important; }
+  .kz-prose .kz-callout, .kz-prose .kz-block, .kz-prose mark { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .kz-prose table { border-collapse: collapse; }
+  .kz-prose th, .kz-prose td { border: 1px solid #999 !important; }
   .kz-prose .kz-details [data-type="detailsContent"] { display: block !important; }
+  .kz-prose .kz-details > button { display: none !important; }
   .kz-prose a { color: black; text-decoration: underline; }
+  /* Adresse des liens externes reprise après le texte (le papier ne se clique pas) */
+  .kz-prose a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 85%; color: #444; word-break: break-all; }
+  .kz-prose .kz-mermaid svg { max-height: 230mm; }
   section { overflow: visible !important; }
 }

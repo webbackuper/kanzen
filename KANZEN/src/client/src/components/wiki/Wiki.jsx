@@ -639,6 +639,18 @@ export function WikiPage({ user }) {
                 </div>
               )}
 
+              {/* En-tête d'impression : provenance, version et diffusion (masqué à l'écran) */}
+              <div className="kz-print-only text-[9pt] text-gray-700 border-b border-gray-400 pb-2 mb-4">
+                <div className="flex justify-between gap-4">
+                  <span>KanZen · Wiki{page.breadcrumb.length ? ` › ${page.breadcrumb.map((b) => b.title).join(' › ')}` : ''}</span>
+                  {(page.restricted || page.restrictedBy.length > 0) && <strong>DIFFUSION RESTREINTE</strong>}
+                </div>
+                <div>
+                  Version {page.version}, modifiée le {fmt(page.updatedAt)}{page.updatedBy ? ` par ${page.updatedBy.displayName}` : ''}
+                  {page.verification?.verifiedAt ? ` · vérifiée le ${fmt(page.verification.verifiedAt)}` : ''}
+                  {' '}· imprimée le {new Date().toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}{user ? ` par ${user.displayName}` : ''}
+                </div>
+              </div>
               <header className="flex flex-wrap items-start justify-between gap-3 mb-2">
                 {editing
                   ? <div className="flex-1 min-w-0 flex items-center gap-3">
@@ -702,6 +714,7 @@ export function WikiPage({ user }) {
                   editable={editing}
                   collab={editing ? collab : undefined}
                   pages={linkPages}
+                  pageId={page.id}
                   onChange={(c) => { setDraft((d) => ({ ...d, content: c })); setDirty(true); }}
                   onUploadFile={uploadFile}
                   onNavigate={(href) => navigate(href)}
@@ -718,9 +731,11 @@ export function WikiPage({ user }) {
                   </ul>
                 </section>
               )}
-              {!editing && !page.deletedAt && <TaskLinks page={page} canEdit={canEdit} refreshKey={linksKey} />}
-              {!editing && <Backlinks pageId={page.id} refreshKey={`${linksKey}-${page.version}`} />}
-              {!editing && <PageComments page={page} user={user} refreshKey={commentsKey} />}
+              <div className="kz-noprint">
+                {!editing && !page.deletedAt && <TaskLinks page={page} canEdit={canEdit} refreshKey={linksKey} />}
+                {!editing && <Backlinks pageId={page.id} refreshKey={`${linksKey}-${page.version}`} />}
+                {!editing && <PageComments page={page} user={user} refreshKey={commentsKey} />}
+              </div>
 
               {modal === 'history' && <HistoryModal page={page} canEdit={canEdit} onClose={() => setModal(null)} onRestored={(p) => { setPage((x) => ({ ...x, ...p })); setModal(null); }} />}
               {modal === 'move' && tree && <MoveModal page={page} pages={tree.pages} onClose={() => setModal(null)} onMoved={() => { setModal(null); reloadTree(); load(); }} />}

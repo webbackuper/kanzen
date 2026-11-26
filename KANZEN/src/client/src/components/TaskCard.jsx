@@ -1,6 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { MessageSquare, Paperclip, CalendarClock, CheckSquare } from 'lucide-react';
+import { Ban, MessageSquare, Paperclip, CalendarClock, CheckSquare, Gauge } from 'lucide-react';
 import { format, isPast } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { LabelChip, PriorityIcon } from './boardMeta';
@@ -54,7 +54,7 @@ export function TaskCard({ task, onOpen, disabled, done: inDoneColumn = false, l
       onClick={() => onOpen(task.id)}
       // Entrée ouvre la carte ; Espace la déplace (capteur clavier de dnd-kit, cf. KanbanBoard)
       onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onOpen(task.id); } }}
-      aria-label={`${task.title}${task.dueDate ? `, échéance ${format(new Date(task.dueDate), 'd MMMM', { locale: fr })}${late ? ', en retard' : ''}` : ''}${task.assignees?.length ? `, assignée à ${task.assignees.map((u) => u.displayName).join(', ')}` : ''}`}
+      aria-label={`${task.title}${task.blocked ? ', bloquée' : ''}${task.dueDate ? `, échéance ${format(new Date(task.dueDate), 'd MMMM', { locale: fr })}${late ? ', en retard' : ''}` : ''}${task.assignees?.length ? `, assignée à ${task.assignees.map((u) => u.displayName).join(', ')}` : ''}`}
       className={`p-3 mb-2 rounded-lg border shadow-sm hover:shadow-md transition-shadow ${disabled ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'} ${COLORS[task.color] ?? COLORS.white}`}
     >
       {labels.length > 0 && (
@@ -79,6 +79,8 @@ export function TaskCard({ task, onOpen, disabled, done: inDoneColumn = false, l
       <div className="flex items-center justify-between mt-2 text-xs text-gray-500 dark:text-gray-400">
         <span className="flex gap-3 items-center">
           <PriorityIcon priority={task.priority} />
+          {task.blocked && <span className="flex items-center gap-1 text-red-700 dark:text-red-300 font-medium" title="Bloquée par une carte non terminée"><Ban size={12} aria-hidden="true" /> Bloquée</span>}
+          {task.estimate != null && <span className="flex items-center gap-1" title="Estimation"><Gauge size={12} aria-hidden="true" /> {task.estimate.toLocaleString('fr-FR')}</span>}
           {task._count?.attachments > 0 && <span className="flex items-center gap-1"><Paperclip size={12} /> {task._count.attachments}</span>}
           {task._count?.comments > 0 && <span className="flex items-center gap-1"><MessageSquare size={12} /> {task._count.comments}</span>}
         </span>

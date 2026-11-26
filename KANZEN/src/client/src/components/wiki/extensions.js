@@ -33,6 +33,7 @@ import markdown from 'highlight.js/lib/languages/markdown';
 import plaintext from 'highlight.js/lib/languages/plaintext';
 import { CodeBlockView } from './CodeBlockView';
 import { SuggestionList } from './SuggestionList';
+import { SubpagesView, TocView } from './BlockViews';
 
 // --- Coloration syntaxique (langages embarqués : aucun téléchargement à l'exécution) ---
 export const LANGUAGES = [
@@ -43,6 +44,7 @@ export const LANGUAGES = [
   ['css', 'CSS', css], ['dockerfile', 'Dockerfile', dockerfile], ['nginx', 'Nginx', nginx], ['apache', 'Apache', apache],
   ['go', 'Go', go], ['java', 'Java', java], ['csharp', 'C#', csharp], ['perl', 'Perl', perl], ['php', 'PHP', php],
   ['ruby', 'Ruby', ruby], ['diff', 'Diff', diff], ['markdown', 'Markdown', markdown],
+  ['mermaid', 'Diagramme Mermaid', plaintext],
 ];
 const lowlight = createLowlight();
 for (const [name, , def] of LANGUAGES) lowlight.register(name, def);
@@ -108,6 +110,33 @@ export const Callout = Node.create({
       unsetCallout: () => ({ commands }) => commands.lift(this.name),
     };
   },
+});
+
+// --- Blocs dynamiques : sous-pages de la page, sommaire (contenu calculé à l'affichage, rien d'autre n'est stocké) ---
+// Insertion suivie d'un paragraphe : le curseur quitte le bloc (sinon la frappe suivante remplacerait le bloc sélectionné)
+export const Subpages = Node.create({
+  name: 'subpages',
+  group: 'block',
+  atom: true,
+  draggable: true,
+  selectable: true,
+  addOptions() { return { pages: () => [], pageId: () => null }; },
+  parseHTML() { return [{ tag: 'div[data-type="subpages"]' }]; },
+  renderHTML() { return ['div', { 'data-type': 'subpages', class: 'kz-subpages' }]; },
+  addNodeView() { return ReactNodeViewRenderer(SubpagesView); },
+  addCommands() { return { insertSubpages: () => ({ commands }) => commands.insertContent([{ type: this.name }, { type: 'paragraph' }]) }; },
+});
+
+export const TableOfContents = Node.create({
+  name: 'toc',
+  group: 'block',
+  atom: true,
+  draggable: true,
+  selectable: true,
+  parseHTML() { return [{ tag: 'nav[data-type="toc"]' }]; },
+  renderHTML() { return ['nav', { 'data-type': 'toc', class: 'kz-toc' }]; },
+  addNodeView() { return ReactNodeViewRenderer(TocView); },
+  addCommands() { return { insertToc: () => ({ commands }) => commands.insertContent([{ type: this.name }, { type: 'paragraph' }]) }; },
 });
 
 // --- Menus de suggestion (« / » commandes, « [[ » liens vers des pages) ---

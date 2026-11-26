@@ -54,6 +54,9 @@ const NODES = {
   details: { open: bool },
   detailsSummary: {},
   detailsContent: {},
+  /** Blocs dynamiques : sous-pages de la page et sommaire (calculés à l'affichage, sans attribut). */
+  subpages: {},
+  toc: {},
   table: {},
   tableRow: {},
   tableHeader: { colspan: int(1, 50), rowspan: int(1, 50), colwidth: (v) => (Array.isArray(v) && v.every((n) => Number.isInteger(n) && n > 0 && n < 5000) ? v.slice(0, 50) : undefined) },
@@ -184,6 +187,8 @@ function block(n, indent = '') {
     case 'blockquote': return c.map((x) => block(x)).join('\n\n').split('\n').map((l) => `> ${l}`).join('\n');
     case 'codeBlock': return `\`\`\`${n.attrs?.language ?? ''}\n${c.map((x) => x.text).join('')}\n\`\`\``;
     case 'horizontalRule': return '---';
+    case 'subpages': return '<!-- sous-pages -->';
+    case 'toc': return '<!-- sommaire -->';
     case 'image': return inline([n]);
     case 'fileAttachment': return `${indent}📎 [${escapeMd(n.attrs?.filename ?? 'fichier')}](${fileUrl(n.attrs.src)})`;
     case 'callout': {

@@ -4,10 +4,11 @@ import { DndContext, closestCorners, useSensor, useSensors, PointerSensor, Keybo
 import { SortableContext, horizontalListSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { io } from 'socket.io-client';
 import { isPast } from 'date-fns';
-import { Archive, BarChart3, Download, Filter, Keyboard, Plus, Tag, X } from 'lucide-react';
+import { Archive, BarChart3, Columns3, Download, Filter, ChartGantt, Keyboard, List, Plus, SlidersHorizontal, Tag, X } from 'lucide-react';
 import { Column } from './Column';
 import { TaskDetail } from './TaskDetail';
-import { ArchivedModal, LabelsModal } from './BoardPanels';
+import { ArchivedModal, FieldsModal, LabelsModal } from './BoardPanels';
+import { ListView, TimelineView } from './BoardViews';
 import { PRIORITIES } from './boardMeta';
 import { api, setSocketId } from '../api';
 import { ErrorBox, Loading, Modal, Toast, btnGhost, btnPrimary, input, isTyping } from '../ui';
@@ -46,7 +47,7 @@ export function KanbanBoard({ user }) {
   const [pendingDelete, setPendingDelete] = useState(null); // { column, timer } : suppression annulable
   const [help, setHelp] = useState(false);
   const [addSignal, setAddSignal] = useState(0);
-  const [panel, setPanel] = useState(null); // 'labels' | 'archived'
+  const [panel, setPanel] = useState(null); // 'labels' | 'archived' | 'fields'
   const filterRef = useRef(null);
   const pendingRef = useRef(null);
   pendingRef.current = pendingDelete;
@@ -59,6 +60,8 @@ export function KanbanBoard({ user }) {
   const color = params.get('color') ?? '';
   const labelF = params.get('label') ?? '';
   const prio = params.get('prio') ?? '';
+  // Vue : tableau (défaut), liste ou chronologie ; conservée dans l'URL
+  const view = ['list', 'timeline'].includes(params.get('view')) ? params.get('view') : 'board';
   const setFilter = (k, v) => setParams((p) => { const n = new URLSearchParams(p); if (v) n.set(k, v); else n.delete(k); return n; }, { replace: true });
   const clearFilters = () => setQ('') || setParams((p) => { const n = new URLSearchParams(p); ['q', 'who', 'late', 'color', 'label', 'prio'].forEach((k) => n.delete(k)); return n; }, { replace: true });
   const filtering = !!(q || who || lateOnly || color || labelF || prio);
@@ -160,12 +163,12 @@ export function KanbanBoard({ user }) {
     const k = (e) => {
       if (e.ctrlKey || e.metaKey || e.altKey || isTyping() || openTask || help || panel) return;
       if (e.key === '/') { e.preventDefault(); filterRef.current?.focus(); }
-      else if (e.key === 'n' && board?.myRole !== 'VIEWER' && columns.length) { e.preventDefault(); setAddSignal((n) => n + 1); }
+      else if (e.key === 'n' && view === 'board' && board?.myRole !== 'VIEWER' && columns.length) { e.preventDefault(); setAddSignal((n) => n + 1); }
       else if (e.key === '?') { e.preventDefault(); setHelp(true); }
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
-  }, [board?.myRole, columns.length, openTask, help, panel]);
+  }, [board?.myRole, columns.length, openTask, help, panel, view]);
 
   const onDragEnd = async ({ active, over }) => {
     if (!over || active.id === over.id) return;
@@ -223,7 +226,14 @@ export function KanbanBoard({ user }) {
           <h1 className="text-lg font-bold text-gray-900 dark:text-white">{board.title}</h1>
         </div>
         <div className="flex flex-wrap gap-2">
+          <span role="group" aria-label="Vue" className="inline-flex rounded-md border border-gray-200 dark:border-slate-700 p-0.5">
+            {[['board', 'Tableau', Columns3], ['list', 'Liste', List], ['timeline', 'Chronologie', ChartGantt]].map(([v, label, Icon]) => (
+              <button key={v} type="button" aria-pressed={view === v} onClick={() => setFilter('view', v === 'board' ? '' : v)}
+                className={`${btnGhost} !py-1 ${view === v ? '!bg-indigo-50 !text-indigo-700 dark:!bg-indigo-900/40 dark:!text-indigo-200' : ''}`}><Icon size={16} /> {label}</button>
+            ))}
+          </span>
           <button type="button" className={btnGhost} onClick={() => setPanel('labels')}><Tag size={16} /> Étiquettes</button>
+          <button type="button" className={btnGhost} onClick={() => setPanel('fields')}><SlidersHorizontal size={16} /> Champs</button>
           <button type="button" className={btnGhost} onClick={() => setPanel('archived')}><Archive size={16} /> Archives{board.archivedCount ? ` (${board.archivedCount})` : ''}</button>
           <button type="button" className={btnGhost} onClick={() => setHelp(true)} aria-label="Raccourcis clavier" title="Raccourcis clavier (?)"><Keyboard size={16} /></button>
           <Link to={`/b/${id}/stats`} className={btnGhost}><BarChart3 size={16} /> Statistiques</Link>
@@ -260,7 +270,9 @@ export function KanbanBoard({ user }) {
         <span className="sr-only" aria-live="polite">{filtering ? `${columns.reduce((n, c) => n + c.tasks.length, 0)} carte(s) affichée(s)` : ''}</span>
       </form>
       {error && <div className="px-6 pt-3"><ErrorBox error={error} /></div>}
-      <div className="flex-1 overflow-x-auto overflow-y-hidden p-6">
+      {view === 'list' && <div className="flex-1 min-h-0 p-6"><ListView columns={columns} board={board} labelsById={labelsById} onOpen={setOpenTask} /></div>}
+      {view === 'timeline' && <div className="flex-1 min-h-0 p-6"><TimelineView columns={columns} onOpen={setOpenTask} /></div>}
+      {view === 'board' && <div className="flex-1 overflow-x-auto overflow-y-hidden p-6">
         <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragEnd={onDragEnd}
           accessibility={{
             screenReaderInstructions: { draggable: 'Carte déplaçable : Entrée pour l\'ouvrir. Espace pour la prendre, flèches pour la déplacer, Espace pour la poser, Échap pour annuler.' },
@@ -286,9 +298,10 @@ export function KanbanBoard({ user }) {
             )}
           </div>
         </DndContext>
-      </div>
+      </div>}
       {openTask && <TaskDetail key={openTask} taskId={openTask} workspaceId={board.workspace.id} user={user} onClose={() => setOpenTask(null)} onChanged={load} onOpenTask={setOpenTask} />}
       {panel === 'labels' && <LabelsModal board={board} canEdit={canEdit} onClose={() => setPanel(null)} onChanged={load} />}
+      {panel === 'fields' && <FieldsModal board={board} canEdit={canEdit} onClose={() => setPanel(null)} onChanged={load} />}
       {panel === 'archived' && <ArchivedModal boardId={id} canEdit={canEdit} onClose={() => setPanel(null)} onChanged={load} onOpen={(t) => { setPanel(null); setOpenTask(t); }} />}
       {pendingDelete && (
         <Toast message={`Colonne « ${pendingDelete.column.title} » et ses ${pendingDelete.column.total} tâche(s) supprimées.`} action="Annuler" onAction={undoDelete} />

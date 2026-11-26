@@ -655,7 +655,7 @@ export default async function wikiRoutes(app) {
   }, async (req) => {
     await authz.require(req.user, req.params.id, 'VIEWER');
     const tasks = await prisma.task.findMany({
-      where: { column: { board: { workspaceId: req.params.id, archived: false } }, ...(req.query.q.trim() ? { title: { contains: req.query.q.trim(), mode: 'insensitive' } } : {}) },
+      where: { archivedAt: null, column: { board: { workspaceId: req.params.id, archived: false } }, ...(req.query.q.trim() ? { title: { contains: req.query.q.trim(), mode: 'insensitive' } } : {}) },
       orderBy: { updatedAt: 'desc' }, take: 20, select: taskSel,
     });
     return { tasks: tasks.map(publicTask) };

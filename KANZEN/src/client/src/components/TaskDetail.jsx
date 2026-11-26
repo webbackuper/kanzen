@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Archive, ArrowRightLeft, ClipboardCopy, Copy, Download, History, Link2, Paperclip, Pencil, RotateCcw, Tag, Trash2 } from 'lucide-react';
+import { Archive, ArrowRightLeft, Ban, ClipboardCopy, Copy, Download, History, Link2, ListPlus, Paperclip, Pencil, RotateCcw, Tag, Trash2, X } from 'lucide-react';
 import { api } from '../api';
 import { COLORS, initials } from './TaskCard';
 import { ErrorBox, Loading, Modal, input, btnPrimary, btnGhost, btnDanger } from '../ui';
 import { TaskWikiLinks } from './TaskWikiLinks';
 import { LabelChip, LABEL_COLORS, PRIORITIES, describeActivity } from './boardMeta';
+import { Link } from 'react-router-dom';
 
 const fmtSize = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} Mo` : `${Math.ceil(n / 1024)} ko`);
 const toDay = (d) => d?.slice(0, 10) ?? '';
@@ -68,6 +69,116 @@ function TransferModal({ task, boards, onClose, onDone }) {
   );
 }
 
+/** Saisie d'un champ personnalisé : enregistrée à la sortie du champ (texte, nombre) ou au changement. */
+function FieldInput({ field, value, ro, onSave }) {
+  const [v, setV] = useState(value ?? (field.type === 'CHECKBOX' ? false : ''));
+  useEffect(() => { setV(value ?? (field.type === 'CHECKBOX' ? false : '')); }, [value, field.type]);
+  const commit = (next) => {
+    let out = next;
+    if (field.type === 'NUMBER') out = next === '' ? null : Number(next);
+    if (out === '') out = null;
+    if ((out ?? null) !== (value ?? null)) onSave(out);
+  };
+  const id = `kz-field-${field.id}`;
+  if (field.type === 'CHECKBOX') {
+    return (
+      <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200 pt-5">
+        <input id={id} type="checkbox" checked={Boolean(v)} disabled={ro} onChange={(e) => { setV(e.target.checked); onSave(e.target.checked); }} /> {field.name}
+      </label>
+    );
+  }
+  return (
+    <label className="text-xs text-gray-500" htmlFor={id}>{field.name}
+      {field.type === 'SELECT' ? (
+        <select id={id} className={input} value={v} disabled={ro} onChange={(e) => { setV(e.target.value); commit(e.target.value); }}>
+          <option value="">—</option>
+          {field.options.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      ) : (
+        <input id={id} className={input} disabled={ro} value={v}
+          type={field.type === 'NUMBER' ? 'number' : field.type === 'DATE' ? 'date' : 'text'} step={field.type === 'NUMBER' ? 'any' : undefined}
+          maxLength={field.type === 'TEXT' ? 500 : undefined}
+          onChange={(e) => { setV(e.target.value); if (field.type === 'DATE') commit(e.target.value); }}
+          onBlur={(e) => field.type !== 'DATE' && commit(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(e.currentTarget.value); } }} />
+      )}
+    </label>
+  );
+}
+
+/** Lien vers une carte liée : ouverture directe sur le même tableau, sinon navigation vers son tableau. */
+function DepLink({ dep, boardId, onOpenTask }) {
+  const label = (
+    <>
+      <span className={dep.done ? 'line-through text-gray-500' : ''}>{dep.title}</span>
+      <span className="text-xs text-gray-500"> · {dep.boardId === boardId ? '' : `${dep.boardTitle} › `}{dep.column}</span>
+    </>
+  );
+  return dep.boardId === boardId
+    ? <button type="button" className="text-left hover:underline min-w-0 truncate" onClick={() => onOpenTask?.(dep.id)}>{label}</button>
+    : <Link className="hover:underline min-w-0 truncate" to={`/b/${dep.boardId}?task=${dep.id}`}>{label}</Link>;
+}
+
+/** Dépendances « bloquée par » / « bloque » avec recherche des cartes de l'espace. */
+function Dependencies({ task, taskId, workspaceId, ro, run, onOpenTask }) {
+  const [adding, setAdding] = useState(false);
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState([]);
+  useEffect(() => {
+    if (!adding) return undefined;
+    const t = setTimeout(() => {
+      api.get(`/workspaces/${workspaceId}/tasks?q=${encodeURIComponent(q)}`).then((r) => setResults(r.tasks), () => setResults([]));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [adding, q, workspaceId]);
+  const excluded = new Set([taskId, ...task.blockedBy.map((d) => d.id)]);
+  const open = task.blockedBy.filter((d) => !d.done).length;
+  return (
+    <section aria-labelledby="kz-deps">
+      <h3 id="kz-deps" className="text-sm font-semibold mb-2 dark:text-gray-200 flex items-center gap-1.5">
+        <Ban size={14} /> Dépendances
+        {open > 0 && <span className="text-xs font-medium px-1.5 py-px rounded bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100">Bloquée</span>}
+      </h3>
+      {task.blockedBy.length === 0 && task.blocks.length === 0 && !adding && <p className="text-xs text-gray-500">Aucune dépendance.</p>}
+      {task.blockedBy.length > 0 && (
+        <div className="mb-2">
+          <p className="text-xs text-gray-500">Bloquée par</p>
+          <ul className="space-y-1">
+            {task.blockedBy.map((d) => (
+              <li key={d.id} className="flex items-center gap-2 text-sm dark:text-gray-200">
+                <DepLink dep={d} boardId={task.boardId} onOpenTask={onOpenTask} />
+                {!ro && <button type="button" className="ml-auto text-gray-500 hover:text-red-600" onClick={run(() => api.del(`/tasks/${taskId}/dependencies/${d.id}`))} aria-label={`Retirer le blocage par ${d.title}`}><X size={12} /></button>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {task.blocks.length > 0 && (
+        <div className="mb-2">
+          <p className="text-xs text-gray-500">Bloque</p>
+          <ul className="space-y-1">{task.blocks.map((d) => <li key={d.id} className="text-sm dark:text-gray-200"><DepLink dep={d} boardId={task.boardId} onOpenTask={onOpenTask} /></li>)}</ul>
+        </div>
+      )}
+      {!ro && (adding ? (
+        <div className="space-y-1">
+          <input className={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher la carte bloquante…" aria-label="Rechercher la carte bloquante" autoFocus maxLength={100} />
+          <ul className="max-h-48 overflow-y-auto divide-y divide-gray-100 dark:divide-slate-800" aria-label="Cartes trouvées">
+            {results.filter((r) => !excluded.has(r.id)).map((r) => (
+              <li key={r.id}>
+                <button type="button" className="w-full text-left text-sm py-1.5 px-1 hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-gray-200"
+                  onClick={run(async () => { await api.post(`/tasks/${taskId}/dependencies`, { blockerId: r.id }); setAdding(false); setQ(''); })}>
+                  {r.title} <span className="text-xs text-gray-500">· {r.board.title} › {r.column}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button type="button" className={btnGhost} onClick={() => setAdding(false)}>Annuler</button>
+        </div>
+      ) : <button type="button" className={btnGhost} onClick={() => setAdding(true)}><ListPlus size={14} /> Ajouter « bloquée par »</button>)}
+    </section>
+  );
+}
+
 export function TaskDetail({ taskId, workspaceId, user, onClose, onChanged, onOpenTask }) {
   const [task, setTask] = useState(null);
   const [error, setError] = useState(null);
@@ -90,7 +201,7 @@ export function TaskDetail({ taskId, workspaceId, user, onClose, onChanged, onOp
     if (resetForm) {
       setForm({
         title: t.title, description: t.description, color: t.color, priority: t.priority,
-        dueDate: toDay(t.dueDate), startDate: toDay(t.startDate), assigneeIds: t.assignees.map((u) => u.id), labelIds: t.labelIds,
+        dueDate: toDay(t.dueDate), startDate: toDay(t.startDate), estimate: t.estimate ?? '', assigneeIds: t.assignees.map((u) => u.id), labelIds: t.labelIds,
       });
     }
   }, setError);
@@ -108,6 +219,7 @@ export function TaskDetail({ taskId, workspaceId, user, onClose, onChanged, onOp
   const save = run(() => api.patch(`/tasks/${taskId}`, {
     title: form.title, description: form.description, color: form.color, priority: form.priority,
     dueDate: toIso(form.dueDate), startDate: toIso(form.startDate),
+    estimate: form.estimate === '' ? null : Number(form.estimate),
     assigneeIds: form.assigneeIds, labelIds: form.labelIds,
   }), { resetForm: true });
   const del = async () => {
@@ -178,7 +290,7 @@ export function TaskDetail({ taskId, workspaceId, user, onClose, onChanged, onOp
                 {members.length === 0 && <span className="text-xs text-gray-500">Aucun membre</span>}
               </div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
               <label className="text-xs text-gray-500">Priorité
                 <select className={input} value={form.priority} onChange={set('priority')} disabled={ro}>
                   {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
@@ -186,6 +298,9 @@ export function TaskDetail({ taskId, workspaceId, user, onClose, onChanged, onOp
               </label>
               <label className="text-xs text-gray-500">Début<input type="date" className={input} value={form.startDate} onChange={set('startDate')} disabled={ro} max={form.dueDate || undefined} /></label>
               <label className="text-xs text-gray-500">Échéance<input type="date" className={input} value={form.dueDate} onChange={set('dueDate')} disabled={ro} min={form.startDate || undefined} /></label>
+              <label className="text-xs text-gray-500">Estimation
+                <input type="number" min="0" max="100000" step="any" className={input} value={form.estimate} onChange={set('estimate')} disabled={ro} title="Points, heures ou jours, selon la convention de l'équipe" />
+              </label>
               <label className="text-xs text-gray-500">Couleur
                 <select className={input} value={form.color} onChange={set('color')} disabled={ro}>
                   {Object.keys(COLORS).map((c) => <option key={c} value={c}>{c}</option>)}
@@ -194,6 +309,17 @@ export function TaskDetail({ taskId, workspaceId, user, onClose, onChanged, onOp
             </div>
             {!ro && <div className="flex justify-between"><button className={btnPrimary}>Enregistrer</button><button type="button" className={btnDanger} onClick={del}><Trash2 size={14} /> Supprimer</button></div>}
           </form>
+
+          {task.boardFields.length > 0 && (
+            <section aria-label="Champs personnalisés" className="grid grid-cols-2 gap-2">
+              {task.boardFields.map((f) => (
+                <FieldInput key={f.id} field={f} value={task.fieldValues[f.id]} ro={ro}
+                  onSave={(value) => run(() => api.put(`/tasks/${taskId}/fields/${f.id}`, { value }))()} />
+              ))}
+            </section>
+          )}
+
+          <Dependencies task={task} taskId={taskId} workspaceId={workspaceId} ro={ro} run={run} onOpenTask={onOpenTask} />
 
           <section>
             <h3 className="text-sm font-semibold mb-2 dark:text-gray-200">Sous-tâches</h3>

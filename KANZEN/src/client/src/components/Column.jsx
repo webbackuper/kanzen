@@ -20,6 +20,7 @@ export function Column({ column, canEdit, onOpen, onError, onDelete, isLast, tot
   const [wip, setWip] = useState(null); // saisie de la limite WIP en cours (null = fermée)
   const menuRef = useRef(null);
   const count = total ?? column.tasks.length; // total réel (hors filtre) pour la limite WIP
+  const estimate = column.tasks.reduce((n, t) => n + (t.estimate ?? 0), 0);
   const over = column.wipLimit && count > column.wipLimit;
 
   // Raccourci « n » (nouvelle carte) relayé par le tableau
@@ -69,6 +70,7 @@ export function Column({ column, canEdit, onOpen, onError, onDelete, isLast, tot
             title={canEdit ? 'Double-clic pour renommer' : undefined}>{column.title}</h3>
         )}
         <span className="flex items-center gap-1">
+          {estimate > 0 && <span className="text-xs text-gray-500 dark:text-gray-400" title="Somme des estimations des cartes affichées">Σ {Math.round(estimate * 10) / 10}</span>}
           <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${over ? 'bg-red-200 text-red-800' : 'bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-gray-300'}`}
             title={over ? 'Limite WIP dépassée' : undefined}>
             {count !== column.tasks.length ? `${column.tasks.length} / ` : ''}{count}{column.wipLimit ? ` (WIP ${column.wipLimit})` : ''}

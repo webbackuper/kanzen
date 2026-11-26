@@ -36,6 +36,15 @@ enum TaskPriority {
   CRITICAL
 }
 
+/// Type d'un champ personnalisé de tableau
+enum FieldType {
+  TEXT
+  NUMBER
+  DATE
+  SELECT
+  CHECKBOX
+}
+
 /// Origine du compte
 enum AuthSource {
   LOCAL
@@ -129,16 +138,57 @@ model WorkspaceMember {
 }
 
 model Board {
-  id          String    @id @default(uuid()) @db.Uuid
+  id          String       @id @default(uuid()) @db.Uuid
   title       String
-  workspaceId String    @db.Uuid
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  archived    Boolean   @default(false)
-  createdAt   DateTime  @default(now())
+  workspaceId String       @db.Uuid
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  archived    Boolean      @default(false)
+  createdAt   DateTime     @default(now())
   columns     Column[]
   labels      Label[]
+  fields      BoardField[]
 
   @@index([workspaceId])
+}
+
+/// Champ personnalisé d'un tableau (à la monday / ClickUp)
+model BoardField {
+  id       String           @id @default(uuid()) @db.Uuid
+  boardId  String           @db.Uuid
+  board    Board            @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  name     String
+  type     FieldType
+  /// Valeurs proposées (type SELECT)
+  options  String[]         @default([])
+  position Float
+  values   TaskFieldValue[]
+
+  @@index([boardId])
+}
+
+/// Valeur d'un champ personnalisé sur une carte (JSON typé selon le champ)
+model TaskFieldValue {
+  taskId  String     @db.Uuid
+  task    Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fieldId String     @db.Uuid
+  field   BoardField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  value   Json
+
+  @@id([taskId, fieldId])
+  @@index([fieldId])
+}
+
+/// Dépendance entre cartes : « blocker » bloque « blocked » (même espace)
+model TaskDependency {
+  blockerId   String   @db.Uuid
+  blocker     Task     @relation("Blocks", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedId   String   @db.Uuid
+  blocked     Task     @relation("BlockedBy", fields: [blockedId], references: [id], onDelete: Cascade)
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
 }
 
 /// Étiquette d'un tableau (nom + couleur), à la Trello
@@ -178,26 +228,31 @@ model Column {
 }
 
 model Task {
-  id          String         @id @default(uuid()) @db.Uuid
+  id          String           @id @default(uuid()) @db.Uuid
   title       String
-  description String         @default("")
-  color       String         @default("white")
+  description String           @default("")
+  color       String           @default("white")
   /// Position fractionnaire dans la colonne (réordonnancement sans renuméroter)
   position    Float
-  columnId    String         @db.Uuid
-  column      Column         @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  columnId    String           @db.Uuid
+  column      Column           @relation(fields: [columnId], references: [id], onDelete: Cascade)
   dueDate     DateTime?
   startDate   DateTime?
-  priority    TaskPriority   @default(NONE)
+  priority    TaskPriority     @default(NONE)
+  /// Estimation de la charge, en heures
+  estimate    Float?
   /// Carte archivée : masquée du tableau, restaurable
   archivedAt  DateTime?
   assignees   TaskAssignee[]
   labels      TaskLabel[]
   activities  TaskActivity[]
-  createdById String?        @db.Uuid
-  createdBy   User?          @relation("CreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  fieldValues TaskFieldValue[]
+  blocks      TaskDependency[] @relation("Blocks")
+  blockedBy   TaskDependency[] @relation("BlockedBy")
+  createdById String?          @db.Uuid
+  createdBy   User?            @relation("CreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 
   subtasks    SubTask[]
   comments    Comment[]
