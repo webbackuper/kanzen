@@ -41,6 +41,17 @@ Une désactivation décidée par un administrateur KanZen n'est **jamais** levé
 
 **Garde-fous :** rien n'est désactivé si l'annuaire est injoignable, s'il ne renvoie aucun membre, ou si la synchronisation désactiverait plus de la moitié des comptes AD actifs (au-delà de 5). Ce cas signale presque toujours une erreur de `LDAP_GROUP_USERS` ou de `LDAP_BASE_DN` : le motif est journalisé (`directory.sync`, échec) et rien n'est modifié. Après vérification, `kanzenctl ad-sync --force` lève le garde-fou.
 
+**Révocation des connexions temps réel :** une désactivation (synchronisation, administrateur), une révocation de sessions ou un retrait d'un espace ferme aussi les websockets ouvertes (tableau, wiki, co-édition) : immédiatement quand la décision est prise par le service lui-même, et au plus tard en 60 secondes sinon (revalidation périodique de la session et des droits de chaque websocket, `kanzenctl ad-sync` compris). Les modifications de co-édition non enregistrées d'un compte désactivé ne sont pas enregistrées automatiquement.
+
+**Identité de référence : l'objectGUID.** Un `sAMAccountName` réattribué à un nouvel agent (homonyme, compte recréé) n'hérite jamais des espaces, pages et affectations de l'ancien titulaire :
+
+| Situation à la connexion (ou à l'ajout) | Effet | Audit |
+|---|---|---|
+| Même identifiant, autre objectGUID, ancien compte **désactivé** | L'ancien compte est renommé `identifiant~xxxxxxxx` (historique conservé), un nouveau compte est créé | `user.username_released` |
+| Même identifiant, autre objectGUID, ancien compte **actif** | Connexion refusée (`identity_mismatch`) : un administrateur désactive l'ancien compte s'il s'agit bien d'un départ | `auth.login` (échec) |
+
+Conséquence à connaître : une migration de domaine qui change les objectGUID (ADMT) crée de nouveaux comptes KanZen ; les droits sont alors à redonner, ou les comptes à rapprocher en base avant la bascule.
+
 Le compte de service n'a besoin que de la lecture : recherche paginée des membres (appartenance récursive) dans `LDAP_BASE_DN`.
 
 Si plusieurs URL sont configurées (`LDAP_URL` séparées par des virgules), KanZen bascule sur le contrôleur de domaine suivant en cas d'indisponibilité réseau.

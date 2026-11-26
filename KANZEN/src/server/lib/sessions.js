@@ -37,6 +37,14 @@ export function createSessionStore(prisma, cfg) {
       return { sessionId: s.id, user: s.user };
     },
 
+    /** Contrôle sans prolonger la session (revalidation périodique des websockets) : true si toujours valide. */
+    async isValid(token) {
+      if (!token || typeof token !== 'string' || token.length > 100) return false;
+      const s = await prisma.session.findUnique({ where: { tokenHash: sha256(token) }, select: { expiresAt: true, lastSeenAt: true, user: { select: { disabled: true } } } });
+      const now = Date.now();
+      return Boolean(s) && s.expiresAt.getTime() >= now && s.lastSeenAt.getTime() + idleMs >= now && !s.user.disabled;
+    },
+
     destroy: (token) => prisma.session.deleteMany({ where: { tokenHash: sha256(token ?? '') } }),
     destroyAllForUser: (userId) => prisma.session.deleteMany({ where: { userId } }),
     purgeExpired: () => prisma.session.deleteMany({ where: { expiresAt: { lt: new Date() } } }),

@@ -64,6 +64,7 @@ function useWikiTree(workspaceId, onEvent) {
     const socket = io({ path: '/socket.io', withCredentials: true });
     let timer = null;
     let connectedOnce = false;
+    let stopped = false;
     const reloadSoon = () => { clearTimeout(timer); timer = setTimeout(load, 250); }; // rafales regroupées
     socket.on('connect', () => {
       socket.emit('wiki:join', workspaceId);
@@ -71,9 +72,12 @@ function useWikiTree(workspaceId, onEvent) {
       if (connectedOnce) { reloadSoon(); eventRef.current?.({ workspaceId, reason: 'resync' }); }
       connectedOnce = true;
     });
+    // Déconnexion par le serveur (revalidation des droits, révocation) : une seule tentative de reconnexion ;
+    // elle échoue si la session n'est plus valide, et le salon n'est pas rejoint si l'accès a été retiré.
+    socket.on('disconnect', (reason) => { if (reason === 'io server disconnect') setTimeout(() => { if (!stopped) socket.connect(); }, 3000); });
     // Un commentaire ne change pas l'arborescence : pas de rechargement de l'arbre
     socket.on('wiki:changed', (e) => { if (e.workspaceId === workspaceId) { if (e.reason !== 'comments') reloadSoon(); eventRef.current?.(e); } });
-    return () => { clearTimeout(timer); socket.disconnect(); };
+    return () => { stopped = true; clearTimeout(timer); socket.disconnect(); };
   }, [workspaceId, load]);
   return { tree, error, reload: load };
 }

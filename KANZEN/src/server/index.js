@@ -25,7 +25,7 @@ if (cfg.auth.ldapEnabled && app.ldap && cfg.ldap.syncMinutes > 0) {
   const run = async () => {
     if (running) return;
     running = true;
-    try { await syncDirectory({ prisma, ldap: app.ldap, audit: app.audit, log: app.log }); } catch (err) { app.log.error({ err }, 'synchronisation AD'); } finally { running = false; }
+    try { await syncDirectory({ prisma, ldap: app.ldap, audit: app.audit, log: app.log, onRevoke: app.realtime.disconnectUser }); } catch (err) { app.log.error({ err }, 'synchronisation AD'); } finally { running = false; }
   };
   setTimeout(run, 30_000).unref(); // premier passage peu après le démarrage
   adsync = setInterval(run, cfg.ldap.syncMinutes * 60_000);
