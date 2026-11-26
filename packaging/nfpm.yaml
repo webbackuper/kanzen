@@ -1,0 +1,54 @@
+# Paquets RPM et DEB KanZen, générés par nfpm (https://nfpm.goreleaser.com) depuis le bundle.
+name: kanzen
+arch: amd64
+platform: linux
+version: ${KANZEN_VERSION}
+release: ${KANZEN_RELEASE}
+section: web
+priority: optional
+maintainer: KanZen <admin@kanzen.local>
+description: |
+  KanZen - Kanban et gestion de projet auto-hébergés pour réseau fermé.
+  Runtime Node.js embarqué ; authentification Active Directory (LDAPS) et comptes locaux.
+vendor: KanZen
+homepage: https://kanzen.local
+license: MIT
+
+overrides:
+  deb:
+    depends: [postgresql-client, "libssl3 | libssl3t64", tar, gzip, util-linux, ca-certificates]
+    recommends: [postgresql, nginx, gnupg]
+  rpm:
+    depends: [postgresql, openssl-libs, tar, gzip, util-linux, ca-certificates, shadow-utils]
+    recommends: [postgresql-server, nginx, gnupg2]
+
+contents:
+  - src: ./.stage/opt/kanzen
+    dst: /opt/kanzen
+    type: tree
+  - src: ./files/kanzenctl
+    dst: /usr/sbin/kanzenctl
+    file_info: { mode: 0755 }
+  - src: ./files/systemd/kanzen.service
+    dst: /usr/lib/systemd/system/kanzen.service
+  - src: ./files/systemd/kanzen-backup.service
+    dst: /usr/lib/systemd/system/kanzen-backup.service
+  - src: ./files/systemd/kanzen-backup.timer
+    dst: /usr/lib/systemd/system/kanzen-backup.timer
+  - src: ./files/kanzen.env
+    dst: /etc/kanzen/kanzen.env
+    type: config|noreplace
+    file_info: { mode: 0640 }
+  - src: ./files/nginx/kanzen.conf
+    dst: /usr/share/kanzen/nginx/kanzen.conf
+
+scripts:
+  preinstall: ./scripts/preinstall.sh
+  postinstall: ./scripts/postinstall.sh
+  preremove: ./scripts/preremove.sh
+  postremove: ./scripts/postremove.sh
+
+rpm:
+  compression: zstd
+deb:
+  compression: xz

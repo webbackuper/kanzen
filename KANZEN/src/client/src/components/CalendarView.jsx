@@ -1,60 +1,50 @@
-import React, { useState, useEffect } from 'react';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, parseISO } from 'date-fns';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { addMonths, eachDayOfInterval, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, isToday, parseISO, startOfMonth, startOfWeek } from 'date-fns';
 import { fr } from 'date-fns/locale';
+import { api } from '../api';
+import { ErrorBox, useApi, btnGhost } from '../ui';
 
-export function CalendarView({ token }) {
-  const [tasks, setTasks] = useState([]);
-  const [currentDate, setCurrentDate] = useState(new Date());
+const BORDER = { red: 'border-red-500', green: 'border-green-500', yellow: 'border-yellow-500', orange: 'border-orange-500', purple: 'border-purple-500', blue: 'border-blue-500', gray: 'border-gray-400' };
 
-  useEffect(() => {
-    // Récupération des tâches (on réutilise le endpoint board pour simplifier)
-    fetch('/api/board/default', { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => res.json())
-      .then(data => {
-        // Aplatir les colonnes pour avoir une liste de tâches
-        const allTasks = data.columns?.flatMap(col => col.tasks) || [];
-        setTasks(allTasks.filter(t => t.dueDate)); // Garder celles avec une date
-      });
-  }, [token]);
-
-  // Génération de la grille du mois
-  const days = eachDayOfInterval({
-    start: startOfMonth(currentDate),
-    end: endOfMonth(currentDate)
-  });
+export function CalendarView() {
+  const [month, setMonth] = useState(() => startOfMonth(new Date()));
+  const [mine, setMine] = useState(false);
+  // Grille du lundi précédant le 1er au dimanche suivant le dernier jour
+  const from = startOfWeek(startOfMonth(month), { weekStartsOn: 1 });
+  const to = endOfWeek(endOfMonth(month), { weekStartsOn: 1 });
+  const key = format(month, 'yyyy-MM');
+  const { data, error } = useApi(() => api.get(`/calendar?from=${format(from, 'yyyy-MM-dd')}&to=${format(to, 'yyyy-MM-dd')}${mine ? '&mine=true' : ''}`), [key, mine]);
+  const tasks = data?.tasks ?? [];
 
   return (
     <div className="p-6 h-full flex flex-col max-w-7xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-gray-800 dark:text-white capitalize">
-          {format(currentDate, 'MMMM yyyy', { locale: fr })}
-        </h2>
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-2xl font-bold text-gray-800 dark:text-white capitalize">{format(month, 'MMMM yyyy', { locale: fr })}</h1>
+        <div className="flex gap-1 items-center">
+          <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300 mr-3">
+            <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> Mes tâches
+          </label>
+          <button className={btnGhost} onClick={() => setMonth(addMonths(month, -1))} aria-label="Mois précédent"><ChevronLeft size={16} /></button>
+          <button className={btnGhost} onClick={() => setMonth(startOfMonth(new Date()))}>Aujourd&apos;hui</button>
+          <button className={btnGhost} onClick={() => setMonth(addMonths(month, 1))} aria-label="Mois suivant"><ChevronRight size={16} /></button>
+        </div>
       </div>
-
-      <div className="grid grid-cols-7 gap-4 flex-1 overflow-y-auto">
-        {/* En-têtes Jours */}
-        {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map(d => (
-          <div key={d} className="font-semibold text-center text-gray-500 dark:text-gray-400 py-2">{d}</div>
-        ))}
-
-        {/* Jours */}
-        {days.map(day => {
-          const dayTasks = tasks.filter(t => isSameDay(parseISO(t.dueDate), day));
+      <ErrorBox error={error} />
+      <div className="grid grid-cols-7 gap-2 flex-1 overflow-y-auto">
+        {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((d) => <div key={d} className="font-semibold text-center text-gray-500 dark:text-gray-400 py-1 text-sm">{d}</div>)}
+        {eachDayOfInterval({ start: from, end: to }).map((day) => {
+          const dayTasks = tasks.filter((t) => isSameDay(parseISO(t.dueDate), day));
           return (
-            <div key={day.toString()} className="min-h-[120px] bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 p-3 hover:shadow-md transition-shadow">
-              <div className="text-right text-sm text-gray-400 mb-2 font-mono">
-                {format(day, 'd')}
-              </div>
-              
-              <div className="flex flex-col gap-2">
-                {dayTasks.map(task => (
-                  <div key={task.id} className={`text-xs p-2 rounded border-l-4 truncate ${
-                    task.color === 'red' ? 'border-red-500 bg-red-50 dark:bg-red-900/30' :
-                    task.color === 'green' ? 'border-green-500 bg-green-50 dark:bg-green-900/30' :
-                    'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
-                  }`}>
-                    {task.content}
-                  </div>
+            <div key={day.toISOString()} className={`min-h-[100px] rounded-lg border p-2 ${isSameMonth(day, month) ? 'bg-white dark:bg-slate-800' : 'bg-gray-50 dark:bg-slate-900 opacity-60'} ${isToday(day) ? 'border-indigo-500' : 'border-gray-100 dark:border-slate-700'}`}>
+              <div className="text-right text-xs text-gray-400 mb-1 font-mono">{format(day, 'd')}</div>
+              <div className="flex flex-col gap-1">
+                {dayTasks.map((t) => (
+                  <Link key={t.id} to={`/b/${t.column.board.id}`} title={`${t.column.board.title} · ${t.column.title}${t.assignees.length ? ` · ${t.assignees.map((u) => u.displayName).join(', ')}` : ''}`}
+                    className={`text-xs p-1.5 rounded border-l-4 truncate bg-indigo-50 dark:bg-indigo-900/30 dark:text-gray-200 ${BORDER[t.color] ?? 'border-indigo-500'}`}>
+                    {t.title}
+                  </Link>
                 ))}
               </div>
             </div>

@@ -4,12 +4,13 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   build: {
-    outDir: '../../dist', // Build vers la racine pour le Dockerfile
+    outDir: '../../dist', // Build vers KANZEN/dist (copié en ./public par le Dockerfile)
     emptyOutDir: true,
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:3000' // Proxy pour le dev local
+      '/api': 'http://localhost:3000', // Proxy pour le dev local
+      '/socket.io': { target: 'http://localhost:3000', ws: true },
     }
   }
 });

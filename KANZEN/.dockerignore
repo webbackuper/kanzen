@@ -1,0 +1,6 @@
+node_modules
+dist
+public
+uploads
+.env
+src/server/generated
